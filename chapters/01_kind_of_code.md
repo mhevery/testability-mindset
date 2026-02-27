@@ -88,7 +88,7 @@ A lot of discussion about making code testable focuses on managing global state 
 
 You can think of Pure and Effect code as building blocks of your application. The job of providers is to assemble the building blocks into a useful graph. 
 
-Let's imagine a simplified Point-of-Sale Application which 
+Let's imagine a simplified Point-of-Sale Application which looks like this:
 
 ```mermaid
 graph TD
@@ -105,14 +105,15 @@ graph TD
     Fraud --> DB
     Storage --> DB
 
-    classDef pure fill:#C1F0C1,stroke:#333,color:#000
-    classDef effect fill:#F0C1C1,stroke:#333,color:#000
+    classDef pure fill:#C1F0C1,stroke:#333,color:#000,stroke-width:1px,rx:30px,ry:30px
+    classDef effect fill:#F0C1C1,stroke:#333,color:#000,stroke-width:1px,rx:0px,ry:0px
 
     class App,Payment pure
     class DB,Fraud,Net,Storage effect
 ```
+> 🟢 (green) Pure code; 🟥 (red): Effect code
 
-In the above examples green nodes are Pure and red nodes are Effects. The job of the Provider is to assemble the objects into a cohesive graph which performs useful work. It may be tempting to think there is only one useful way to assemble your application, but in fact, there are many ways depending on the environment. Here are some examples:
+The job of the Provider is to assemble the objects into a cohesive graph which performs useful work. It may be tempting to think there is only one useful way to assemble your application, but in fact, there are many ways depending on the environment. Here are some examples:
 
 * **Production**: This is the most obvious way to assemble the application, to perform its intended use.
 * **Staging**: This is similar to **Production**, but we replace the `Database` with `StagingDatabase`. 
