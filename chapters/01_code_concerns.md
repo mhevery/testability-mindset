@@ -1,9 +1,9 @@
-# Different Kinds of Code: Pure, Effects, Providers, Test
+# Code Concerns: Pure, Effects, Providers, Test
 
 [![hackmd-github-sync-badge](https://hackmd.io/v4y2FQBoRQuPiXOqNbW7DQ/badge)](https://hackmd.io/v4y2FQBoRQuPiXOqNbW7DQ)
 
 
-There are many ways to categorize code, and no one way is the right way. For our purposes, we will examine it through the lens of testing and categorize it into four main types. Understanding these categories will help you design more testable software. Briefly, these categories are:
+There are many ways to categorize code, and no one way is the right way. For our purposes, we will examine it through the lens of testing and categorize it into four main concerns. Understanding these concerns will help you design more testable software. Briefly, these concerns are:
 
 * **Pure**: Pure code depends only on its inputs and produces no side effects. It always returns the same output for the same input.
 * **Effect**: Side effect (or effect) code (in contrast to pure) depends on global state, or affects global state.
@@ -145,4 +145,28 @@ function main() {
 
 ## Test
 
-Finally, we need Test code to exercise 
+Finally, we need Test code to exercise our application (Pure, Effect, and Provider code.)
+
+```ts
+function testSimpleAddition() {
+  expect(add(1,2)).toBe(3);
+}
+```
+
+ The tests functions are functions which take no arguments and return no result. Ideally the test should be allowed to run in any order and concurrently. All of this implies that tests themselves should also be pure, but tests server a very different purpose from the Pure code.
+
+ The job of the test code is to instantiate a graph of objects and then apply stimulus and assert expected result. 
+
+ ## Why separate code into different types?
+
+ When talking about code it is useful to have unique names (Pure, Effect, Provider) for different kinds of code which one encounters in the application. By giving the code unique names we can talk about different concepts and attach different rules to each concept. We can learn to recognize which kind of code we are looking at and have a vocabulary when we discuss these ideas with our coworkers.
+
+ The high level rules of writing clean, well-designed, and testable code are roughly: 
+
+| Principle | What is it? | Why Good for Testing | Why Good Design |
+| --- | --- | --- | --- |
+| **Separation of concerns** | Each class should handle exactly one type of code: Pure, Effect, or Provider. | Tests can instantiate sub-graphs and replace Effects with mocks. Mixed code prevents substitution and testing flexibility. | Separating concerns makes code reusable across environments (Production, Staging, Server, Client). |
+| **Constructor does minimal work** | Constructors should only initialize objects, not execute side effects. | Tests can instantiate objects without triggering unexpected behavior. | Side effects should happen explicitly during execution, not during object creation. |
+| **Ask for what you need** | Request only required dependencies; don't dig into objects to extract nested data. | Greatly reduces number of objects which tests need to instantiate. | Code is more focused and pulls in fewer dependencies. |
+| **Avoid global state & singletons** | Minimize static variables and shared mutable state. | Global state makes tests order-dependent and non-deterministic, causing flaky tests. | Global state hides dependencies and creates implicit coupling between components. |
+| **Single responsibility** | Each class should do one thing well. | Simpler code with fewer dependencies is easier to test in isolation. | Well-focused classes are easier to understand, and modify without unexpected side effects. |
