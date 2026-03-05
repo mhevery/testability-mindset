@@ -111,7 +111,7 @@ graph TD
     class App,Payment pure
     class DB,Fraud,Net,Storage effect
 ```
-> 🟢 (green) Pure code; 🟥 (red): Effect code
+> 🟥 (red): Effect code; 🟢 (green) Pure codecurv-trap
 
 The job of the Provider is to assemble the objects into a cohesive graph which performs useful work. It may be tempting to think there is only one useful way to assemble your application, but in fact, there are many ways depending on the environment. Here are some examples:
 

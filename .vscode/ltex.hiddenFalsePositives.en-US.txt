@@ -1,0 +1,1 @@
+{"rule":"AFFECT_EFFECT","sentence":"^\\QWhy can't Effect depend on Provider\\E$"}
