@@ -12,7 +12,7 @@ There are many ways to categorize code, and no one way is the right way. For our
 
 ## Pure
 
-Let’s start with the simplest piece of code for testing, a pure function. A pure function is one whose output depends only on its input; specifically, it does not modify any global state and is therefore side-effect-free.  
+Let’s start with the simplest piece of code for testing, a pure function. A pure function is one whose output depends only on its input; specifically, it does not modify any global state and is therefore side-effect-free. 
 
 Here is an example of a pure function where the output of the function depends only on the function's input:
 
@@ -111,7 +111,7 @@ graph TD
     class App,Payment pure
     class DB,Fraud,Net,Storage effect
 ```
-> 🟥 (red): Effect code; 🟢 (green) Pure codecurv-trap
+> 🟢 (green) Pure code; 🟥 (red): Effect code
 
 The job of the Provider is to assemble the objects into a cohesive graph which performs useful work. It may be tempting to think there is only one useful way to assemble your application, but in fact, there are many ways depending on the environment. Here are some examples:
 
