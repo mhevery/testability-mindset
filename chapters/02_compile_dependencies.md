@@ -1,5 +1,8 @@
 # Compile Dependencies
 
+[![hackmd-github-sync-badge](https://hackmd.io/RHuhlko8TOy-lpaawUQSww/badge)](https://hackmd.io/RHuhlko8TOy-lpaawUQSww)
+
+
 Let's discuss how we should think about code concerns from the perspective of compile-time dependencies.
 
 Code concerns should be layered:
