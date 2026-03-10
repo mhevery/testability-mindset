@@ -1,14 +1,23 @@
-# Code Concerns: Pure, Effects, Providers, Test
+# Color Coding your Code
 
 [![hackmd-github-sync-badge](https://hackmd.io/v4y2FQBoRQuPiXOqNbW7DQ/badge)](https://hackmd.io/v4y2FQBoRQuPiXOqNbW7DQ)
 
+There are many ways to categorize code, and no single categorization is perfect. Each approach is useful in certain contexts, so view the categorization in this book as a helpful lens rather than the definitive way. 
 
-There are many ways to categorize code, and no one way is the right way. For our purposes, we will examine it through the lens of testing and categorize it into four main concerns. Understanding these concerns will help you design more testable software. Briefly, these concerns are:
+Code can do virtually anything, but when code lacks clear boundaries, it becomes difficult to reason about, refactor, and test. We call such code non-malleable or non-modular. To address this, we apply "best practices" that organize code in ways to help our understanding.
 
-* **Pure**: Pure code depends only on its inputs and produces no side effects. It always returns the same output for the same input.
-* **Effect**: Side effect (or effect) code (in contrast to pure) depends on global state, or affects global state.
-* **Provider**: The provider is responsible for creating a graph of objects.
-* **Test**: Test code is used to create the code under test, apply a stimulus, and assert its output.
+In this book, we categorize code into four main types based on testability and modularity. Think of this as a color-coding system where code ranges from highly "pure" (strict rules) to completely "unbound" (no restrictions). An important principle: if well-behaved code depends on less-behaved code, the well-behaved code becomes tainted. This contamination is contagious—your code inherits the constraints of its least constrained dependencies.
+
+* 🟢 **Pure**: Pure code depends only on its inputs and produces no side effects. It always returns the same output for the same input. It is well-behaved.
+* 🟡 **Effect**: Side effect (or effect) code (in contrast to pure) interacts with the external world by depending on the global state, or affects the global state.
+* 🔵 **Provider**: The provider is responsible for assembling a graph of objects for different environments. By keeping providers separate from Effects, you can swap implementations (e.g., use a real database in production, a mock in tests).
+* ⚫️ **Unbound**: Test code is used to create the code under test, apply a stimulus, and assert its output.
+
+We split the code into its colors because we apply different rules to each color. These rules guide us in understanding:
+
+- How we should think about the code
+- How we should discuss it with other engineers
+- How it should be assembled into a working application
 
 ## Pure
 
@@ -17,43 +26,75 @@ Let’s start with the simplest piece of code for testing, a pure function. A pu
 Here is an example of a pure function where the output of the function depends only on the function's input:
 
 ```ts
+// @pure
 function add(a: int, b: int) {
   return a + b;
 }
 ```
 
-If you are doing functional programming, the above definition will suffice, but for object-oriented code, we need to define what pure code is. Pure code is similar to a pure function in that its output depends only on its input, but it can also extend to the concept of objects.
+> NOTE: Throughout the book, we will leave annotations (such as  `// @Pure`) to signify the intent of the code. 
+
+If you are doing functional programming, the above definition suffices, but for object-oriented code, we need to define what pure code is. Pure code is similar to a pure function in that its output depends only on its input, but it can also extend to the concept of objects.
+
+### Scope
+
+When discussing whether code is pure, it is important to realize that it is scope-dependent. For example `a + b` may look pure, but if you zoom in, you realize that 
+At the CPU register level, it has a side effect of destroying register values, yet we consider it pure because we know the compiler will generate all the necessary code to make it appear pure, so we treat it as such.
+
+The important point to understand is that when we talk about "pure," we always need to ask with reference to what.
+- `a + b` has side effects with respect to registers
+- but `a + b` is pure with respect to statements around it.
+
+Similarly, is a `set(key, value)` function on a `Map` pure? Well, it certainly has side effects; it mutates the `Map`. But look at this code:
 
 ```ts
-var map = new Map<string, int>();
-map.set("abc", 3);
-map.get("abc");
+function testMapSet() {
+  var map = new Map<string, int>();
+  map.set("abc", 3);
+  map.get("abc");
+}
 ```
 
-The code above is also pure code, because its behavior is identical every time it is invoked. The code does not read or write to the global state. Even though we allocated memory and called `set`, which has a side effect on the `map`, the mutations are contained within the code block because the `map` is allocated and released within it. 
+Even though `set(key, value)` has side effects on the `Map`, `testMapSet()` is pure. That is because the `Map` is:
+1. Created within the test.
+2. The `set(key, value)` mutates  the code within the test.
+3. The `Map` is released as part of the test.
 
-A good way to think about it is to ask: Can multiple copies of the code run concurrently without interfering with each other? 
+From the point of view of the test, `Map` and all of its methods are pure, because we can invoke multiple tests concurrently, and the tests can not influence each other. 
 
-In our example, the same code can run concurrently because there is no communication channel between different invocations of the block, and therefore the executions are isolated. 
+
+The code above is also pure code, because its behavior is identical every time it is invoked. The code neither reads nor writes to the global state. Even though we allocated memory and called `set()`, which has a side effect on the `Map`, the mutations are contained within the code block because the `Map` is allocated and released within the test. 
+
+### Concurrency
+
+A good way to think about whether code is "pure" is to ask: Can multiple copies of the code run concurrently without interfering with each other? 
+
+In our example, the same code can run concurrently because there is no communication channel between invocations, so the executions are isolated. 
 
 Pure code is easy to test because:
 
 1. Its output only depends on its input.
 2. It is safe to execute in parallel with other code/tests.
 
-```ts
-function testMap() {
-  var map = new Map<string, int>();
-  map.set("abc", 3);
-  expect(map.get("abc")).toEqual(3);
-}
-```
+### Examples of pure code
+
+To get a feel for what code is pure, here are some obvious examples: `String`,  `List`, `Array`, `Vector`, `Map`, and most data types in your standard library.
+
+Your own "data" types, such as `Invoice`, `Person`, `Contact`. Here, "data" means these classes are meant to store information useful to your application. (Obviously, it depends on your implementation)
+
+So what is not pure? We will discuss this next, but to contrast with pure:
+- Anything that is doing I/O. `Network`, `FileSystem`, `DataBase`
+- Anything that mutates the global state.
+
+
+None of the above code is likely to be pure, because running multiple copies concurrently would result in unexpected failures. I/O and Global State would be ways in which different instances of code could influence each other.
+
 
 ## Effect
 
-Above, we described what pure code is. The effect code is essentially all other code. The effect code is code that reads or writes global state. The global state is outside the function's explicit input and output.
+Above, we described what pure code is. The effect code is essentially all other code. The effect code reads or writes the global state. The global state is outside the function's explicit input and output.
 
-> It should be stated that you should minimize global state as much as possible. When discussing the global state, it is worth noting that it exists within your program's execution, usually through static variables. However, there is also a global state outside your program memory, such as the file system, database, network, user inputs, etc. While it should be your goal to minimize the *static variables* (global state), it is not possible for you to minimize the *external global state* (file system, database, user input). As a matter of fact, a program that would not interact with *external global state* would not be useful at all. 
+> It should be stated that you should minimize global state as much as possible. When discussing the global state, note that it exists within your program's execution, typically via static variables. However, there is also a global state outside your program memory, such as the file system, database, network, user inputs, etc. While it should be your goal to minimize the *static variables* (global state), it is not possible for you to minimize the *external global state* (file system, database, user input). As a matter of fact, a program that would not interact with *external global state* would not be useful at all. 
 
 ```ts
 Math.random();
@@ -69,20 +110,26 @@ Above are examples of “effect” code. Each statement's behavior depends on a 
 * **Test order matters**: Test A can write to the `output.txt` file, and test B can read from it; running the tests in the wrong order may cause test failure. The test may pass when run in isolation, but fail when run as a set. 
 * **Concurrency matters**:  Running the test in parallel will create a flaky test as the interleaving of global state reads and writes can’t be predicted.
 
-It is All About the Global State
+It is All About the Global State!
 
 One way to think about effect code is that it reads or writes global state.
 
 * `Math.random()`: There is a hidden global variable that contains the seed of the pseudo-random-number generator. Every time the function is invoked, the seed is updated to the next seed.
 * `Date.getTime()`: There is a hidden global variable that contains the current time. The variable increments every millisecond automatically. The function reads the current value to retrieve the current time.
-* `File.read(”data.txt”)`: The function behavior is dependent on the content of the data.txt file. A different process can update the file at any time, causing your test to break.
-* `File.write(”data.txt”, ...)`: The function updates the content of data.txt. There may be other tests that expect the file to have specific content. 
+* `File.read(”data.txt”)`: The function behavior is dependent on the content of the `data.txt` file. A different process can update the file at any time, causing your test to break.
+* `File.write(”data.txt”, ...)`: The function updates the content of `data.txt`. There may be other tests that expect the file to have specific content. 
 * `Environment.get(”username”)`: Reading environment variables means that content behavior can be influenced by code outside the test.
 * `Config.getSingleton().getAuthKey()`: Reading values from singletons means that the state is shared across many tests. Mutating the value outside what the test expects will result in failure. 
 
 Reading data from the database means the database must be in the correct state for our test to pass. Similarly, writing data to the database may break another test down the line by altering the test's initial conditions. 
 
 A lot of discussion about making code testable focuses on managing global state in your application, so you can reason about your code in a pure way. 
+
+### Why care about Effect code?
+
+- Example of effect + pure code
+- Finish with: The reason we seperate effect from pure, is that we want to make effect code replacable.
+
 
 ## Providers
 
