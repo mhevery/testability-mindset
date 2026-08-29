@@ -1,100 +1,188 @@
-# Color Coding your Code
+# Color-Coding Your Code
 
-[![hackmd-github-sync-badge](https://hackmd.io/v4y2FQBoRQuPiXOqNbW7DQ/badge)](https://hackmd.io/v4y2FQBoRQuPiXOqNbW7DQ)
+There are many useful ways to categorize code. We can group code by feature, layer, ownership, runtime, or deployment unit. No single categorization is perfect, and the one in this book is not meant to replace all the others.
 
-There are many ways to categorize code, and no single categorization is perfect. Each approach is useful in certain contexts, so view the categorization in this book as a helpful lens rather than the definitive way. 
+Instead, this chapter offers a lens for thinking about **testability**: What does this code depend on? What can it change? How is it assembled? What role does it play in a test?
 
-Code can do virtually anything, but when code lacks clear boundaries, it becomes difficult to reason about, refactor, and test. We call such code non-malleable or non-modular. To address this, we apply "best practices" that organize code in ways to help our understanding.
+The central idea is simple:
 
-In this book, we categorize code into four main types based on testability and modularity. Think of this as a color-coding system where code ranges from highly "pure" (strict rules) to completely "unbound" (no restrictions). An important principle: if well-behaved code depends on less-behaved code, the well-behaved code becomes tainted. This contamination is contagious—your code inherits the constraints of its least constrained dependencies.
+> Testable applications keep deterministic logic, interactions with external state, object-graph construction, and test orchestration visibly separate.
 
-* 🟢 **Pure**: Pure code depends only on its inputs and produces no side effects. It always returns the same output for the same input. It is well-behaved.
-* 🟡 **Effect**: Side effect (or effect) code (in contrast to pure) interacts with the external world by depending on the global state, or affects the global state.
-* 🔵 **Provider**: The provider is responsible for assembling a graph of objects for different environments. By keeping providers separate from Effects, you can swap implementations (e.g., use a real database in production, a mock in tests).
-* ⚫️ **Unbound**: Test code is used to create the code under test, apply a stimulus, and assert its output.
+When these concerns are mixed together, code becomes harder to reason about, refactor, reuse, and test. When the boundaries are clear, most of the application can be tested with small, fast, deterministic tests, while the unavoidable interactions with the outside world can be tested deliberately.
 
-We split the code into its colors because we apply different rules to each color. These rules guide us in understanding:
+We will color-code four kinds of code:
 
-- How we should think about the code
-- How we should discuss it with other engineers
-- How it should be assembled into a working application
+* 🟢 **Pure** code calculates. Its observable behavior depends only on its explicit inputs.
+* 🟥 **Effect** code interacts. It reads from or writes to state outside its explicit inputs and outputs.
+* 🔷 **Provider** code assembles. It chooses implementations and connects objects into a working application.
+* ⚫ **Test** code exercises. It assembles the code under test, applies a stimulus, and asserts the result.
 
-## Pure
+Each color has a different job, so each color needs different design rules.
 
-Let’s start with the simplest piece of code for testing, a pure function. A pure function is one whose output depends only on its input; specifically, it does not modify any global state and is therefore side-effect-free. 
+## Why boundaries matter
 
-Here is an example of a pure function where the output of the function depends only on the function's input:
+Imagine a point-of-sale application that must:
+
+1. Calculate the total price of a shopping cart.
+2. Charge a payment method.
+3. Save a receipt.
+
+The calculation can be deterministic. Charging a card and saving a receipt cannot: they interact with systems outside the calculation. The application also needs code that decides which payment gateway and receipt store to use. Finally, tests need code that supplies controlled inputs and checks the outcome.
+
+It is possible to put all of this in one method:
 
 ```ts
-// @pure
-function add(a: int, b: int) {
+function checkout(cart: Cart, card: Card): Receipt {
+  var taxRate = Database.queryTaxRate(cart.shippingAddress);
+  var total = calculateSubtotal(cart) * (1 + taxRate);
+  var transactionId = PaymentApi.charge(card, total);
+  var receipt = new Receipt(transactionId, total, Date.getTime());
+  File.write("latest-receipt.json", receipt.toJson());
+  return receipt;
+}
+```
+
+This method is short, but it combines several concerns:
+
+* price calculation;
+* database access;
+* payment processing;
+* reading the clock;
+* receipt creation;
+* file-system access.
+
+To test one pricing rule, we may need a configured database, payment service, clock, and file system. A failure could come from the calculation or from any of those collaborators. The problem is not that the application has effects—a useful application must interact with the world. The problem is that the effects have spread into code that could otherwise be deterministic.
+
+The four colors give us a vocabulary for separating those responsibilities.
+
+## 🟢 Pure code calculates
+
+A pure operation has two important properties:
+
+1. Its observable result depends only on its explicit inputs.
+2. It produces no externally observable side effects.
+
+Given the same inputs, pure code produces the same result:
+
+```ts
+// @Pure
+function add(a: int, b: int): int {
   return a + b;
 }
 ```
 
-> NOTE: Throughout the book, we will leave annotations (such as  `// @Pure`) to signify the intent of the code. 
+Nothing outside `add()` can secretly change its answer, and calling it does not change anything outside the call.
 
-If you are doing functional programming, the above definition suffices, but for object-oriented code, we need to define what pure code is. Pure code is similar to a pure function in that its output depends only on its input, but it can also extend to the concept of objects.
-
-### Scope
-
-When discussing whether code is pure, it is important to realize that it is scope-dependent. For example `a + b` may look pure, but if you zoom in, you realize that 
-At the CPU register level, it has a side effect of destroying register values, yet we consider it pure because we know the compiler will generate all the necessary code to make it appear pure, so we treat it as such.
-
-The important point to understand is that when we talk about "pure," we always need to ask with reference to what.
-- `a + b` has side effects with respect to registers
-- but `a + b` is pure with respect to statements around it.
-
-Similarly, is a `set(key, value)` function on a `Map` pure? Well, it certainly has side effects; it mutates the `Map`. But look at this code:
+Pure code is easy to test:
 
 ```ts
-function testMapSet() {
-  var map = new Map<string, int>();
-  map.set("abc", 3);
-  map.get("abc");
+// @Test
+function testAddition(): void {
+  expect(add(1, 2)).toBe(3);
 }
 ```
 
-Even though `set(key, value)` has side effects on the `Map`, `testMapSet()` is pure. That is because the `Map` is:
-1. Created within the test.
-2. The `set(key, value)` mutates  the code within the test.
-3. The `Map` is released as part of the test.
+The test needs no database, cleanup, network access, or special execution order.
 
-From the point of view of the test, `Map` and all of its methods are pure, because we can invoke multiple tests concurrently, and the tests can not influence each other. 
+### Purity is about an observable boundary
 
+Purity is always discussed relative to a boundary. At the processor level, even `a + b` changes registers. We still call `add()` pure because those changes are implementation details that cannot be observed by its caller.
 
-The code above is also pure code, because its behavior is identical every time it is invoked. The code neither reads nor writes to the global state. Even though we allocated memory and called `set()`, which has a side effect on the `Map`, the mutations are contained within the code block because the `Map` is allocated and released within the test. 
+The same reasoning applies to local mutation:
 
-### Concurrency
+```ts
+// @Pure
+function countProducts(products: Product[]): Map<string, int> {
+  var counts = new Map<string, int>();
 
-A good way to think about whether code is "pure" is to ask: Can multiple copies of the code run concurrently without interfering with each other? 
+  for (var product of products) {
+    var oldCount = counts.get(product.name) ?? 0;
+    counts.set(product.name, oldCount + 1);
+  }
 
-In our example, the same code can run concurrently because there is no communication channel between invocations, so the executions are isolated. 
+  return counts;
+}
+```
 
-Pure code is easy to test because:
+`Map.set()` mutates the local map, so `Map.set()` is not itself a pure operation. But `countProducts()` can still be pure as a whole:
 
-1. Its output only depends on its input.
-2. It is safe to execute in parallel with other code/tests.
+* The map is created inside the function.
+* No other invocation can observe it while it is being built.
+* The mutation does not alter global or shared state.
+* The returned value is determined entirely by `products`.
 
-### Examples of pure code
+This is sometimes called **contained** or **local mutation**. The important question is not whether any machine state changed. The useful question is whether the operation's caller can observe a change other than through the returned result.
 
-To get a feel for what code is pure, here are some obvious examples: `String`,  `List`, `Array`, `Vector`, `Map`, and most data types in your standard library.
+If `countProducts()` reused a shared map instead, the answer would change:
 
-Your own "data" types, such as `Invoice`, `Person`, `Contact`. Here, "data" means these classes are meant to store information useful to your application. (Obviously, it depends on your implementation)
+```ts
+var sharedCounts = new Map<string, int>();
 
-So what is not pure? We will discuss this next, but to contrast with pure:
-- Anything that is doing I/O. `Network`, `FileSystem`, `DataBase`
-- Anything that mutates the global state.
+// @Effect -- mutates shared state
+function countProducts(products: Product[]): Map<string, int> {
+  for (var product of products) {
+    var oldCount = sharedCounts.get(product.name) ?? 0;
+    sharedCounts.set(product.name, oldCount + 1);
+  }
+  return sharedCounts;
+}
+```
 
+Now one call can affect the result of the next. The behavior is no longer determined only by the explicit input.
 
-None of the above code is likely to be pure, because running multiple copies concurrently would result in unexpected failures. I/O and Global State would be ways in which different instances of code could influence each other.
+### Concurrency is a useful diagnostic
 
+A useful way to investigate code is to ask:
 
-## Effect
+> Can independent invocations run concurrently without influencing one another?
 
-Above, we described what pure code is. The effect code is essentially all other code. The effect code reads or writes the global state. The global state is outside the function's explicit input and output.
+Pure code passes this test because invocations do not communicate through shared state. This makes pure tests safe to run in parallel.
 
-> It should be stated that you should minimize global state as much as possible. When discussing the global state, note that it exists within your program's execution, typically via static variables. However, there is also a global state outside your program memory, such as the file system, database, network, user inputs, etc. While it should be your goal to minimize the *static variables* (global state), it is not possible for you to minimize the *external global state* (file system, database, user input). As a matter of fact, a program that would not interact with *external global state* would not be useful at all. 
+However, concurrency safety is a diagnostic, not a complete definition of purity. A thread-safe call to `Date.getTime()` can run concurrently, but it is still not pure: its answer depends on an input—the current time—that does not appear in its parameters.
+
+The more reliable questions are:
+
+* **Can hidden state change the result?** For example, `priceWithDiscount(cart)` is not Pure if it reads the current discount from a global configuration singleton.
+* **Can this operation make an externally observable change?** For example, `createReceipt(order)` is not Pure if it also writes the receipt to a database.
+* **Will the same explicit input always produce the same result?** For example, `isExpired(offer)` is not Pure if it reads the system clock, because the same offer can produce `false` now and `true` later.
+
+### Pure objects
+
+Purity is not limited to standalone functions. Objects can also represent pure behavior:
+
+```ts
+// @Pure
+class PriceCalculator {
+  function total(cart: Cart, taxRate: decimal): Money {
+    var subtotal = Money.zero();
+
+    for (var item of cart.items) {
+      subtotal = subtotal.add(item.unitPrice.multiply(item.quantity));
+    }
+
+    return subtotal.multiply(1 + taxRate);
+  }
+}
+```
+
+`PriceCalculator` needs no database, clock, environment variable, or singleton. All information required for the calculation is explicit.
+
+Typical examples of Pure code include:
+
+* value types such as `Money`, `Address`, and `EmailAddress`;
+* application data such as `Invoice`, `Person`, and `Contact`;
+* validation and formatting rules;
+* parsing and transformation;
+* pricing, eligibility, and business-rule calculations;
+* many standard collection operations.
+
+Whether a particular class is Pure depends on its implementation. An `Invoice` that stores invoice data and calculates a total may be Pure. An `Invoice` that saves itself to a database is not.
+
+## 🟥 Effect code interacts
+
+Effect code reads from or writes to state that is not represented by its explicit inputs and outputs. That state may live inside the process or outside it.
+
+Examples include:
 
 ```ts
 Math.random();
@@ -103,117 +191,341 @@ File.read("data.txt");
 File.write("data.txt", "Some text");
 Environment.get("username");
 Config.getSingleton().getAuthKey();
+Database.query("SELECT ...");
+PaymentApi.charge(card, amount);
 ```
 
-Above are examples of “effect” code. Each statement's behavior depends on a hidden state that is read or written to outside the function's explicit input and output. Asking “Can multiple copies of the code run concurrently without interfering with each other?” will result in unpredictable behavior. This unpredictable behavior will make tests hard to write because:
+These operations depend on or modify **ambient state**:
 
-* **Test order matters**: Test A can write to the `output.txt` file, and test B can read from it; running the tests in the wrong order may cause test failure. The test may pass when run in isolation, but fail when run as a set. 
-* **Concurrency matters**:  Running the test in parallel will create a flaky test as the interleaving of global state reads and writes can’t be predicted.
+* `Math.random()` depends on the generator's hidden state and advances it.
+* `Date.getTime()` depends on a clock that changes independently of the program.
+* `File.read()` depends on content another process may change.
+* `File.write()` changes state that another operation may observe.
+* Environment variables are supplied outside the function call.
+* A mutable singleton shares state among otherwise unrelated callers.
+* A database depends on persistent state shared across requests and processes.
+* A payment request changes a remote system and may trigger real-world consequences.
 
-It is All About the Global State!
+The word “global” is sometimes used for all of these dependencies, but it helps to distinguish them:
 
-One way to think about effect code is that it reads or writes global state.
+* **Process-global state:** static variables, caches, registries, and singletons.
+* **Environmental input:** clocks, randomness, configuration, and user input.
+* **External systems:** databases, file systems, queues, networks, and operating-system services.
+* **Observable output:** writing a file, sending a message, displaying a result, or charging a card.
 
-* `Math.random()`: There is a hidden global variable that contains the seed of the pseudo-random-number generator. Every time the function is invoked, the seed is updated to the next seed.
-* `Date.getTime()`: There is a hidden global variable that contains the current time. The variable increments every millisecond automatically. The function reads the current value to retrieve the current time.
-* `File.read(”data.txt”)`: The function behavior is dependent on the content of the `data.txt` file. A different process can update the file at any time, causing your test to break.
-* `File.write(”data.txt”, ...)`: The function updates the content of `data.txt`. There may be other tests that expect the file to have specific content. 
-* `Environment.get(”username”)`: Reading environment variables means that content behavior can be influenced by code outside the test.
-* `Config.getSingleton().getAuthKey()`: Reading values from singletons means that the state is shared across many tests. Mutating the value outside what the test expects will result in failure. 
+Static mutable state should usually be minimized. External interaction cannot be eliminated: a program that never observes or changes anything outside itself is not very useful. Our goal is therefore not to remove all effects, but to **identify, isolate, and control** them.
 
-Reading data from the database means the database must be in the correct state for our test to pass. Similarly, writing data to the database may break another test down the line by altering the test's initial conditions. 
+### Why effects make tests harder
 
-A lot of discussion about making code testable focuses on managing global state in your application, so you can reason about your code in a pure way. 
+Consider tests that share a file:
 
-### Why care about Effect code?
-
-- Example of effect + pure code
-- Finish with: The reason we seperate effect from pure, is that we want to make effect code replacable.
-
-
-## Providers
-
-You can think of Pure and Effect code as building blocks of your application. The job of providers is to assemble the building blocks into a useful graph. 
-
-Let's imagine a simplified Point-of-Sale Application which looks like this:
-
-```mermaid
-graph TD
-    App["PointOfSaleApp"]
-    Payment["PaymentGateway"]
-    DB["Database"]
-    Fraud["FraudDetection"]
-    Net["Network"]
-    Storage["Storage"]
-    App --> Storage
-    App --> Fraud
-    App --> Payment
-    Payment --> Net
-    Fraud --> DB
-    Storage --> DB
-
-    classDef pure fill:#C1F0C1,stroke:#333,color:#000,stroke-width:1px,rx:30px,ry:30px
-    classDef effect fill:#F0C1C1,stroke:#333,color:#000,stroke-width:1px,rx:0px,ry:0px
-
-    class App,Payment pure
-    class DB,Fraud,Net,Storage effect
-```
-> 🟢 (green) Pure code; 🟥 (red): Effect code
-
-The job of the Provider is to assemble the objects into a cohesive graph which performs useful work. It may be tempting to think there is only one useful way to assemble your application, but in fact, there are many ways depending on the environment. Here are some examples:
-
-* **Production**: This is the most obvious way to assemble the application, to perform its intended use.
-* **Staging**: This is similar to **Production**, but we replace the `Database` with `StagingDatabase`. 
-* **Server**/**Client**: Many applications are server/client, and therefore we may replace `Storage` with `HttpStorageProxy`.
-* **Unit Tests**: In unit-tests we often want small subset of application to be instantiated. For example when testing `PaymentGateway` we use `MockNetwork` and ignore the rest of the application.
-* **End-to-end tests**: In End-to-end tests we instantiate with `InMemoryDatabase` and `MockGateway`.
-
-Here is an example of a provider function assembling the application:
 ```ts
-function pointOfSaleAppProvider() {
-  var network = new Network(...);
-  var gateway = new PaymentGateway(network);
-  var db = new Database(....);
-  var storage = new Storage(db);
-  var fraudDetection = new FraudDetection(db);
+// @Test
+function testWritesReceipt(): void {
+  checkout(...);
+  expect(File.exists("latest-receipt.json")).toBe(true);
 }
-```
-Notice that the creation of application and wiring all the pieces allocate memory, but perform no work. This is important as we don't want the creation to kick of side effects. To see how side effects are kicked off see what an ideal `main()` method looks like:
 
-```ts
-function main() {
-    // Create the graph phase
-    var app = pointOfSaleAppProvider(); // <=== Creation only! No side effects.
-
-    // do useful work phase
-    app.run(); // <=== Side effects happen here
+// @Test
+function testStartsWithoutReceipt(): void {
+  expect(File.exists("latest-receipt.json")).toBe(false);
 }
 ```
 
-## Test
+Each test may pass by itself. Run together, their outcome depends on order. Run concurrently, their result depends on timing.
 
-Finally, we need Test code to exercise our application (Pure, Effect, and Provider code.)
+Uncontrolled effects create several common problems:
+
+* **Order dependence:** one test changes the initial conditions of another.
+* **Flakiness:** timing or interleaving determines whether the test passes.
+* **Environmental dependence:** tests pass on one machine but fail on another.
+* **Slow feedback:** tests wait for networks, disks, databases, or remote services.
+* **Difficult diagnosis:** a failed assertion may reflect broken logic or unavailable infrastructure.
+* **Real-world risk:** a test may send email, delete data, or charge a payment method.
+
+### Effects are necessary; spreading them is not
+
+The design goal is to keep deterministic decisions in Pure code and put external interaction behind focused Effect code.
+
+For checkout, we can separate calculation from interaction:
 
 ```ts
-function testSimpleAddition() {
-  expect(add(1,2)).toBe(3);
+// @Effect
+class CheckoutService {
+  constructor(
+    private prices: PriceCatalog,
+    private payments: PaymentGateway,
+    private receipts: ReceiptStore,
+    private clock: Clock,
+    private calculator: PriceCalculator,
+  ) {}
+
+  function checkout(cart: Cart, paymentMethod: PaymentMethod): Receipt {
+    var taxRate = prices.taxRateFor(cart.shippingAddress);
+    var total = calculator.total(cart, taxRate); // Pure calculation
+    var transactionId = payments.charge(paymentMethod, total);
+    var receipt = new Receipt(transactionId, total, clock.now());
+    receipts.save(receipt);
+    return receipt;
+  }
 }
 ```
 
- The tests functions are functions which take no arguments and return no result. Ideally the test should be allowed to run in any order and concurrently. All of this implies that tests themselves should also be pure, but tests server a very different purpose from the Pure code.
+`CheckoutService` is still Effect code. Giving an effect an interface does not make it Pure: `checkout()` still charges a card and saves a receipt. But the separation gives us two advantages:
 
- The job of the test code is to instantiate a graph of objects and then apply stimulus and assert expected result. 
+1. Pricing rules can be tested independently as Pure code.
+2. The external implementations can be replaced in controlled environments.
 
- ## Why separate code into different types?
+If a calculation merely needs a value such as the current time, we can often preserve purity by obtaining that value at the Effect boundary and passing it in as data:
 
- When talking about code it is useful to have unique names (Pure, Effect, Provider) for different kinds of code which one encounters in the application. By giving the code unique names we can talk about different concepts and attach different rules to each concept. We can learn to recognize which kind of code we are looking at and have a vocabulary when we discuss these ideas with our coworkers.
+```ts
+// @Pure
+function isOfferValid(offer: Offer, now: Instant): boolean {
+  return now.isBefore(offer.expiresAt);
+}
+```
 
- The high level rules of writing clean, well-designed, and testable code are roughly: 
+Compare that with a calculation that reaches for the clock itself:
 
-| Principle | What is it? | Why Good for Testing | Why Good Design |
-| --- | --- | --- | --- |
-| **Separation of concerns** | Each class should handle exactly one type of code: Pure, Effect, or Provider. | Tests can instantiate sub-graphs and replace Effects with mocks. Mixed code prevents substitution and testing flexibility. | Separating concerns makes code reusable across environments (Production, Staging, Server, Client). |
-| **Constructor does minimal work** | Constructors should only initialize objects, not execute side effects. | Tests can instantiate objects without triggering unexpected behavior. | Side effects should happen explicitly during execution, not during object creation. |
-| **Ask for what you need** | Request only required dependencies; don't dig into objects to extract nested data. | Greatly reduces number of objects which tests need to instantiate. | Code is more focused and pulls in fewer dependencies. |
-| **Avoid global state & singletons** | Minimize static variables and shared mutable state. | Global state makes tests order-dependent and non-deterministic, causing flaky tests. | Global state hides dependencies and creates implicit coupling between components. |
-| **Single responsibility** | Each class should do one thing well. | Simpler code with fewer dependencies is easier to test in isolation. | Well-focused classes are easier to understand, and modify without unexpected side effects. |
+```ts
+// @Effect
+function isOfferValid(offer: Offer): boolean {
+  return Date.getTime() < offer.expiresAt;
+}
+```
+
+In the first version, time is an explicit input. In the second, time is a hidden dependency.
+
+### The taint rule
+
+Code inherits the constraints of the dependencies it invokes.
+
+```text
+PriceCalculator → Date.getTime()
+       🟢               🟥
+```
+
+If `PriceCalculator` calls `Date.getTime()`, the calculator is no longer Pure. There is now a path from the calculation to ambient state, so the calculator must be classified as Effect code too.
+
+> The moment Pure code invokes Effect code, it ceases to be Pure.
+
+This “taint” is contagious. A long chain of otherwise deterministic methods becomes Effect code if the chain eventually reaches a database, clock, file, singleton, or other ambient dependency.
+
+The rule is not a moral judgment. Effect code is not bad code. The classification tells us what guarantees the code can provide and what kind of test it requires.
+
+## 🔷 Provider code assembles
+
+Pure and Effect code are the building blocks of an application. Provider code chooses the blocks and connects them into an object graph.
+
+Different environments need different graphs:
+
+* **Production** may use a hosted database and a real payment gateway.
+* **Staging** may use a staging database and a payment sandbox.
+* **Client/server deployments** may replace local storage with an HTTP proxy.
+* **Unit tests** may construct one small subgraph with in-memory Effects.
+* **End-to-end tests** may use a complete graph with a fake payment service.
+
+A production Provider for the checkout application could look like this:
+
+```ts
+// @Provider
+function provideCheckoutService(config: Config): CheckoutService {
+  var database = new Database(config.databaseUrl);
+  var prices = new DatabasePriceCatalog(database);
+  var payments = new HttpPaymentGateway(
+    config.paymentUrl,
+    config.paymentApiKey,
+  );
+  var receipts = new DatabaseReceiptStore(database);
+  var clock = new SystemClock();
+  var calculator = new PriceCalculator();
+
+  return new CheckoutService(
+    prices,
+    payments,
+    receipts,
+    clock,
+    calculator,
+  );
+}
+```
+
+The Provider knows which concrete implementations to use. `CheckoutService` only asks for the collaborators it needs.
+
+### Providers construct; they do not run
+
+Creating the graph should not start useful work or trigger external effects. Construction and execution are separate phases:
+
+```ts
+function main(): void {
+  // Bootstrap phase: obtain environmental input.
+  var config = loadConfig();
+
+  // Construction phase: choose implementations and create the graph.
+  var checkout = provideCheckoutService(config);
+
+  // Execution phase: handle input and perform effects.
+  runPointOfSale(checkout);
+}
+```
+
+`loadConfig()` is itself an Effect, so it happens at the application's outer boundary before the Provider is called. The important boundary is that the Provider and constructors do not unexpectedly query databases, start threads, send requests, or process work.
+
+Minimal constructors make object graphs safe to assemble. A caller can create a component, inspect it, replace a collaborator, or place it in a test without accidentally performing an irreversible action.
+
+Provider code should:
+
+* **Choose concrete implementations.** For example, the production Provider can choose `HttpPaymentGateway`, while a test Provider chooses `InMemoryPaymentGateway`. Keeping this choice in the Provider lets the rest of the application depend on the role of a payment gateway rather than on one particular implementation.
+* **Supply configuration that has already been obtained.** For example, the bootstrap code can read the payment URL from the environment and pass it to the Provider as `config.paymentUrl`. This keeps environmental access explicit and prevents configuration lookups from being scattered throughout constructors.
+* **Construct objects.** For example, the Provider creates `PriceCalculator`, `DatabaseReceiptStore`, and `CheckoutService`. Centralizing construction makes object lifetimes visible and gives the application one place to manage them.
+* **Connect dependencies.** For example, the Provider passes the payment gateway, receipt store, clock, and calculator to `CheckoutService`. This makes the application's dependency graph explicit instead of allowing components to locate collaborators through global state.
+* **Return the completed graph.** For example, `provideCheckoutService()` returns a fully usable `CheckoutService` rather than leaving the caller to set additional fields. A complete graph avoids partially initialized objects and makes construction consistent across callers.
+
+Provider code should not:
+
+* **Contain pricing or other business rules.** For example, a Provider should not choose a tax rate based on the customer's address while constructing `PriceCalculator`. Doing so hides a business decision in assembly code, where it is harder to discover, reuse, and test independently.
+* **Perform the application's useful work.** For example, constructing `CheckoutService` should not immediately charge a card or save a receipt. Otherwise, merely creating the object graph could trigger an irreversible action before the caller is ready.
+* **Hide database queries or network requests in constructors.** For example, `new DatabasePriceCatalog(database)` should record its database dependency, not immediately load every price. Hidden I/O makes construction slow and failure-prone and prevents tests from assembling the graph safely.
+* **Mix graph assembly with request handling.** For example, a Provider should not read an HTTP checkout request while it is choosing the payment gateway implementation. Assembly normally happens once at startup, while request handling happens repeatedly, so combining them confuses their lifetimes and responsibilities.
+
+The place where the complete production graph is assembled is often called the **composition root**. Ideally, concrete Effect implementations are known there and in only a small number of other infrastructure-focused places.
+
+Our example places all composition in a single function, but real application graphs can be vast. In practice, an application usually has many Provider functions, each responsible for assembling one meaningful part of the graph—for example, `providePayments()`, `provideInventory()`, or `provideCheckout()`. A higher-level Provider composes those smaller graphs into the complete application. Providers are deliberately composable so construction remains under the caller's control: a staging or test Provider can reuse most of the production graph while replacing only the payment gateway, database, or other part that differs. This allows implementations to be exchanged at clear boundaries without duplicating or changing the rest of the application's construction.
+
+
+## ⚫ Test code exercises
+
+Test code has a different job from application code. It:
+
+1. Constructs the relevant object graph.
+2. Applies a stimulus.
+3. Asserts the observable result.
+
+A test for the Pure calculator is small:
+
+```ts
+// @Test
+function testCalculatesTotalWithTax(): void {
+  var calculator = new PriceCalculator();
+  var cart = new Cart([
+    new CartItem("book", Money.dollars(20), 2),
+  ]);
+
+  var total = calculator.total(cart, 0.10);
+
+  expect(total).toEqual(Money.dollars(44));
+}
+```
+
+A test for the Effect service needs a larger graph, but it can use controlled implementations:
+
+```ts
+// @Test
+function testCheckoutChargesAndStoresReceipt(): void {
+  var prices = new FixedPriceCatalog(0.10);
+  var payments = new InMemoryPaymentGateway("transaction-123");
+  var receipts = new InMemoryReceiptStore();
+  var clock = new FixedClock(Instant.parse("2030-01-02T03:04:05Z"));
+  var calculator = new PriceCalculator();
+  var checkout = new CheckoutService(
+    prices,
+    payments,
+    receipts,
+    clock,
+    calculator,
+  );
+  var cart = new Cart([
+    new CartItem("book", Money.dollars(20), 2),
+  ]);
+
+  var receipt = checkout.checkout(cart, TestPaymentMethod.approved());
+
+  expect(payments.chargedAmount).toEqual(Money.dollars(44));
+  expect(receipt.transactionId).toBe("transaction-123");
+  expect(receipt.createdAt).toEqual(
+    Instant.parse("2030-01-02T03:04:05Z"),
+  );
+  expect(receipts.saved).toEqual([receipt]);
+}
+```
+
+Test code has broad permission to assemble whichever graph is useful. That is why it deserves its own category rather than being called Provider code. It also applies stimuli and makes assertions—responsibilities that production Providers do not have.
+
+This freedom does not mean tests should leak state. A good test remains:
+
+* isolated from other tests;
+* deterministic;
+* safe to run in any order;
+* safe to run concurrently;
+* responsible for any resources it creates.
+
+The in-memory implementations above contain mutation, but each test creates its own instances. Their mutation is contained within the test's object graph, so separate tests cannot influence one another.
+
+## Recognizing the colors
+
+When reading a class or function, ask these questions in order:
+
+1. **Does it apply a stimulus and assert an outcome?** It is Test code.
+2. **Does it choose implementations and assemble an object graph?** It is Provider code.
+3. **Does it read or change ambient or external state?** It is Effect code.
+4. **Is its behavior determined entirely by explicit inputs, with no observable side effects?** It is Pure code.
+
+If a class does more than one of these, that is a signal to look for a missing boundary.
+
+Some code will require judgment. A cache, for example, contains mutation. A cache local to one operation may be an invisible implementation detail, while a process-wide cache is shared state and therefore an Effect. The colors are tools for reasoning, not labels to apply mechanically.
+
+## Design rules that follow from the colors
+
+### Separate concerns by color
+
+Each class should have one architectural role. A Pure domain object should not save itself. An Effect repository should not decide business policy. A Provider should not process a checkout. A test helper should not become a production dependency.
+
+This separation allows each kind of code to be understood and tested according to its guarantees.
+
+### Keep constructors minimal
+
+Constructors should initialize an object and record its dependencies. They should not query a database, open a network connection, start background work, or call overridable business logic.
+
+Explicit execution is easier to control than work hidden in construction.
+
+### Ask directly for what you need
+
+A class should request its actual dependencies instead of receiving a large container and searching through it:
+
+```ts
+// Too broad: dependencies are hidden behind ApplicationContext.
+new CheckoutService(applicationContext);
+
+// Focused: dependencies are visible.
+new CheckoutService(prices, payments, receipts, clock, calculator);
+```
+
+Explicit dependencies reduce the graph a test must construct and make coupling visible in the API.
+
+### Avoid mutable global state and service locators
+
+Statics, singletons, global registries, and service locators create hidden communication channels. Passing dependencies explicitly lets each environment—and each test—provide the correct implementation.
+
+### Keep each component focused
+
+Separation by color and single responsibility are related but distinct:
+
+* **Separation by color** prevents one component from mixing architectural roles.
+* **Single responsibility** keeps the component focused within its role.
+
+For example, `DatabasePriceCatalog` and `DatabaseReceiptStore` are both Effect code, but combining them may still give one class unrelated reasons to change.
+
+## Summary
+
+The four colors describe four different responsibilities:
+
+| Color | Responsibility | Primary rule |
+| --- | --- | --- |
+| 🟢 **Pure** | Calculate from explicit inputs | Do not observe or change ambient state |
+| 🟥 **Effect** | Interact with state outside the calculation | Keep interactions focused and replaceable |
+| 🔷 **Provider** | Choose implementations and assemble the graph | Construct without executing useful work |
+| ⚫ **Test** | Construct, stimulate, and assert | Keep each test isolated and deterministic |
+
+Effects are not defects. Every useful application eventually interacts with the world. Testable design keeps that interaction at deliberate boundaries so it does not contaminate code that could remain deterministic.
+
+The color of a dependency also constrains the code that uses it: Pure code cannot invoke Effect code and remain Pure. This observation leads naturally to rules about the direction of compile-time dependencies, which we will examine in the next chapter.
