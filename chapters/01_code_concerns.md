@@ -6,14 +6,15 @@ Instead, this chapter offers a lens for thinking about **testability**: What doe
 
 The central idea is simple:
 
-> Testable applications keep deterministic logic, interactions with external state, object-graph construction, and test orchestration visibly separate.
+> Testable applications keep deterministic logic, owned mutable state, interactions with external state, object-graph construction, and test orchestration visibly separate.
 
 When these concerns are mixed together, code becomes harder to reason about, refactor, reuse, and test. When the boundaries are clear, most of the application can be tested with small, fast, deterministic tests, while the unavoidable interactions with the outside world can be tested deliberately.
 
-We will color-code four kinds of code:
+We will color-code five kinds of code:
 
 * 🟢 **Pure** code calculates. Its observable behavior depends only on its explicit inputs.
-* 🟥 **Effect** code interacts. It reads from or writes to state outside its explicit inputs and outputs.
+* 🟡 **PureState** code manages deterministic, explicitly owned mutable state.
+* 🟥 **Effect** code interacts. It accesses ambient state, environmental inputs, or external systems.
 * 🔷 **Provider** code assembles. It chooses implementations and connects objects into a working application.
 * ⚫ **Test** code exercises. It assembles the code under test, applies a stimulus, and asserts the result.
 
@@ -53,7 +54,7 @@ This method is short, but it combines several concerns:
 
 To test one pricing rule, we may need a configured database, payment service, clock, and file system. A failure could come from the calculation or from any of those collaborators. The problem is not that the application has effects—a useful application must interact with the world. The problem is that the effects have spread into code that could otherwise be deterministic.
 
-The four colors give us a vocabulary for separating those responsibilities.
+The five colors give us a vocabulary for separating those responsibilities.
 
 ## 🟢 Pure code calculates
 
@@ -109,7 +110,10 @@ function countProducts(products: Product[]): Map<string, int> {
 * The map is created inside the function.
 * No other invocation can observe it while it is being built.
 * The mutation does not alter global or shared state.
-* The returned value is determined entirely by `products`.
+* The returned contents are determined entirely by `products`.
+* Ownership of the fresh map transfers to the caller; the function retains no mutable alias.
+
+Here and throughout the book, fresh results are compared by their data, not allocation identity. Inputs must remain stable while the calculation reads them; a shallow `readonly` declaration alone does not ensure this. These are requirements the ownership contracts will make explicit.
 
 This is sometimes called **contained** or **local mutation**. The important question is not whether any machine state changed. The useful question is whether the operation's caller can observe a change other than through the returned result.
 
@@ -165,22 +169,73 @@ class PriceCalculator {
 }
 ```
 
-`PriceCalculator` needs no database, clock, environment variable, or singleton. All information required for the calculation is explicit.
+In this example, `Cart`, its items, and `Money` are immutable values. `PriceCalculator` needs no database, clock, environment variable, or singleton. All information required for the calculation is explicit.
 
 Typical examples of Pure code include:
 
 * value types such as `Money`, `Address`, and `EmailAddress`;
-* application data such as `Invoice`, `Person`, and `Contact`;
+* immutable application data such as `Invoice`, `Person`, and `Contact`;
 * validation and formatting rules;
 * parsing and transformation;
 * pricing, eligibility, and business-rule calculations;
-* many standard collection operations.
+* collection transformations that leave their inputs unchanged.
 
-Whether a particular class is Pure depends on its implementation. An `Invoice` that stores invoice data and calculates a total may be Pure. An `Invoice` that saves itself to a database is not.
+Whether a particular class is Pure depends on its implementation. An immutable `Invoice` that calculates a total may be Pure. A mutable invoice with deterministic updates is PureState. An invoice that saves itself to a database introduces an Effect.
+
+## 🟡 PureState manages owned state
+
+`Map.set()` is not Pure: a later read observes its mutation. Calling the `Map` type `@PureState` makes a different promise. Its operations depend only on explicit arguments and the state they are allowed to access, and they do not reach into ambient state or external systems.
+
+```text
+Pure:       inputs → result
+PureState:  current state + inputs → next state + result
+Effect:     behavior also involves the surrounding environment
+```
+
+The state transition must be deterministic. A map, editable shopping cart, or recording fake can satisfy this promise. A cart that reads a global discount or a fake that timestamps calls with the system clock cannot.
+
+```ts
+// @PureState
+class RecordingPaymentGateway {
+  var chargedAmount = Money.zero();
+
+  // Mutates this; no ambient effects.
+  function charge(amount: Money): void {
+    chargedAmount = amount;
+  }
+}
+```
+
+The class color describes the kind of state it manages. Individual method contracts describe which state they read or mutate. A read of a mutable receiver depends on its current state; it is not an immutable value merely because the getter writes nothing.
+
+### A color is not an ownership boundary
+
+A unit of work owns a graph of objects. That unit might be one function invocation, one request, or one test. Objects inside the graph may share state and observe each other's mutations. Containment means those mutations cannot communicate with unrelated units of work through shared references.
+
+The `Map` type does not change color when someone assigns an instance to a global variable. Access through that global is an Effect because it creates an ambient dependency. The type's promise and the instance's ownership are different facts.
+
+The rules are:
+
+1. PureState operations use only declared state and arguments, with deterministic transitions and no ambient effects.
+2. A Pure function may allocate and mutate private PureState without changing its public classification.
+3. Mutating a caller's argument is a stateful operation, even when that caller happens to be an isolated test.
+4. Ownership covers reachable mutable objects. A private collection containing someone else's mutable object does not make that object private.
+5. Fresh results may transfer to a caller. Retaining a mutable alias elsewhere is different from handing over ownership.
+6. Background tasks, callbacks, and retained references must not outlive the boundary that owns their borrowed state.
+
+For example, a sorting function can create a fresh result array and a temporary map that caches sort keys. If the keys depend only on the inputs, the input array remains unchanged, and the cache stays private, the function can be Pure. An in-place sort instead mutates the caller's array and needs a mutation contract. Both can be easy to test.
+
+### Boundaries can contain smaller boundaries
+
+A recording fake changes state visible to the code that owns it. Its `charge()` operation is stateful. A test creates the fake, exercises several collaborators, and reads the recorded amount. Those mutations are visible inside the test but cannot affect another test if the entire mutable graph belongs to this test.
+
+Test isolation is therefore broader than function purity. An isolated test can exercise many stateful operations. It can also be nondeterministic for other reasons, such as reading the clock; containment alone does not guarantee determinism.
+
+The five colors explain roles. To verify ownership mechanically, a checker also needs contracts for reading, mutation, borrowing, retention, and ownership transfer. See [the linter chapter](./07_linter.md).
 
 ## 🟥 Effect code interacts
 
-Effect code reads from or writes to state that is not represented by its explicit inputs and outputs. That state may live inside the process or outside it.
+Effect code accesses ambient state, environmental inputs, or external systems. Passing a database or clock explicitly makes the dependency visible, but does not remove its effects. That state may live inside the process or outside it.
 
 Examples include:
 
@@ -309,20 +364,22 @@ If `PriceCalculator` calls `Date.getTime()`, the calculator is no longer Pure. T
 
 > The moment Pure code invokes Effect code, it ceases to be Pure.
 
+Private PureState mutation does not propagate outward when ownership proves that it is contained. Mutating caller-owned state requires a declared mutation contract. Invoking an Effect remains effectful even through an interface; method contracts must expose that behavior.
+
 This “taint” is contagious. A long chain of otherwise deterministic methods becomes Effect code if the chain eventually reaches a database, clock, file, singleton, or other ambient dependency.
 
 The rule is not a moral judgment. Effect code is not bad code. The classification tells us what guarantees the code can provide and what kind of test it requires.
 
 ## 🔷 Provider code assembles
 
-Pure and Effect code are the building blocks of an application. Provider code chooses the blocks and connects them into an object graph.
+Pure, PureState, and Effect code are the building blocks of an application. Provider code chooses the blocks and connects them into an object graph.
 
 Different environments need different graphs:
 
 * **Production** may use a hosted database and a real payment gateway.
 * **Staging** may use a staging database and a payment sandbox.
 * **Client/server deployments** may replace local storage with an HTTP proxy.
-* **Unit tests** may construct one small subgraph with in-memory Effects.
+* **Unit tests** may construct one small subgraph with owned PureState fakes.
 * **End-to-end tests** may use a complete graph with a fake payment service.
 
 A production Provider for the checkout application could look like this:
@@ -459,7 +516,7 @@ This freedom does not mean tests should leak state. A good test remains:
 * safe to run concurrently;
 * responsible for any resources it creates.
 
-The in-memory implementations above contain mutation, but each test creates its own instances. Their mutation is contained within the test's object graph, so separate tests cannot influence one another.
+The in-memory recording implementations above are PureState, while the fixed clock can return an immutable Pure value. Each test creates its own mutable instances. Their mutation is contained within the test's object graph, so separate tests cannot influence one another through that state. This describes the chosen implementations. A local checker also needs their narrower contracts preserved through the consumer to prove isolation; an interface permitting arbitrary Effects is insufficient on its own.
 
 ## Recognizing the colors
 
@@ -468,11 +525,12 @@ When reading a class or function, ask these questions in order:
 1. **Does it apply a stimulus and assert an outcome?** It is Test code.
 2. **Does it choose implementations and assemble an object graph?** It is Provider code.
 3. **Does it read or change ambient or external state?** It is Effect code.
-4. **Is its behavior determined entirely by explicit inputs, with no observable side effects?** It is Pure code.
+4. **Does it manage deterministic state through explicit reads and updates?** It is PureState code; inspect method contracts and instance ownership.
+5. **Is its behavior determined entirely by explicit inputs, with no externally observable mutation?** It is Pure code, even if its implementation uses private PureState.
 
-If a class does more than one of these, that is a signal to look for a missing boundary.
+Apply these questions to the public responsibility: private mutation inside a Pure calculation is already contained. A class that combines unrelated public responsibilities may need another boundary.
 
-Some code will require judgment. A cache, for example, contains mutation. A cache local to one operation may be an invisible implementation detail, while a process-wide cache is shared state and therefore an Effect. The colors are tools for reasoning, not labels to apply mechanically.
+Some code will require judgment. A cache, for example, contains mutation. A cache local to one operation may be an invisible implementation detail, while access to a process-wide cache introduces an Effect. The cache type can still be PureState; its placement creates the ambient dependency. The colors are tools for reasoning, not labels to apply mechanically.
 
 ## Design rules that follow from the colors
 
@@ -517,11 +575,12 @@ For example, `DatabasePriceCatalog` and `DatabaseReceiptStore` are both Effect c
 
 ## Summary
 
-The four colors describe four different responsibilities:
+The five colors describe five different responsibilities:
 
 | Color | Responsibility | Primary rule |
 | --- | --- | --- |
-| 🟢 **Pure** | Calculate from explicit inputs | Do not observe or change ambient state |
+| 🟢 **Pure** | Calculate from explicit inputs | No ambient effects or mutation of caller-owned state |
+| 🟡 **PureState** | Manage deterministic owned state | Declare state access and respect ownership boundaries |
 | 🟥 **Effect** | Interact with state outside the calculation | Keep interactions focused and replaceable |
 | 🔷 **Provider** | Choose implementations and assemble the graph | Construct without executing useful work |
 | ⚫ **Test** | Construct, stimulate, and assert | Keep each test isolated and deterministic |
