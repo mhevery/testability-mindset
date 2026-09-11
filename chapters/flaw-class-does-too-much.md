@@ -13,7 +13,7 @@ These are TypeScript-like design sketches with proposed annotations and hypothet
 The source describes a class with `main()`, flag parsing, filter/servlet initialization, servlet mapping, and the server loop. An annotation that presents the whole class as an assembler is false:
 
 ```ts
-// @Provider — claimed assembly role.
+// @Assembly — claimed assembly role.
 class KillerAppServer {
   function main(): void {
     var config = parseFlags(Environment.arguments());
@@ -30,13 +30,13 @@ class KillerAppServer {
 ```
 
 ```text
-CONTRACT-PROVIDER KillerAppServer.main: Environment.arguments is ambient input;
+CONTRACT-ASSEMBLY KillerAppServer.main: Environment.arguments is ambient input;
   listen/isRunning/handleNextRequest invoke execution APIs, not assembly APIs.
 DESIGN-COHESION KillerAppServer: flag acquisition, graph construction, routing
   setup, and server execution share one implementation boundary.
 ```
 
-Declaring it Effect would permit the environmental behavior, but would not separate the responsibilities. A local design check can identify the mix of declared Provider and execution operations. It cannot infer all meaningful server responsibilities from the class name.
+Declaring it Effect would permit the environmental behavior, but would not separate the responsibilities. A local design check can identify the mix of declared Assembly and execution operations. It cannot infer all meaningful server responsibilities from the class name.
 
 ### Fixed: explicit bootstrap, assembly, and execution
 
@@ -46,24 +46,24 @@ function parseFlags(args: ImmutableList<string>): ServerConfig {
   return ServerConfig.parse(args); // Deterministic validation and parsing.
 }
 
-// @Provider @ReturnsFresh — filter constructors are inert descriptors.
-function provideFilters(config: AuthConfig): FilterChain {
+// @Assembly @ReturnsFresh — filter constructors are inert descriptors.
+function bindFilters(config: AuthConfig): FilterChain {
   var filters = new FilterChain();
   filters.add(move(new AuthenticationFilter(config)));
   return filters;
 }
 
-// @Provider @ReturnsFresh — mappings own their servlet instances.
-function provideMappings(config: RouteConfig): ServletMappings {
+// @Assembly @ReturnsFresh — mappings own their servlet instances.
+function bindMappings(config: RouteConfig): ServletMappings {
   var mappings = new ServletMappings();
   mappings.add("/", move(new FrontServlet(config)));
   return mappings;
 }
 
-// @Provider — server owns the two assembled graphs.
-function provideServer(config: ServerConfig): HttpServer {
-  var filters = provideFilters(config.auth);
-  var mappings = provideMappings(config.routes);
+// @Assembly — server owns the two assembled graphs.
+function bindServer(config: ServerConfig): HttpServer {
+  var filters = bindFilters(config.auth);
+  var mappings = bindMappings(config.routes);
   return new HttpServer(move(filters), move(mappings));
 }
 
@@ -81,7 +81,7 @@ function runServer(server: HttpServer, port: int): void {
 function main(): void {
   var args = Environment.arguments();
   var config = parseFlags(args);
-  var server = provideServer(config);
+  var server = bindServer(config);
   runServer(server, config.port);
 }
 ```
@@ -99,7 +99,7 @@ function testFlags(): void {
 
 // @Test — construct the production graph without running it.
 function testAssembly(): void {
-  var server = provideServer(testServerConfig());
+  var server = bindServer(testServerConfig());
   expect(server).toBeDefined();
 }
 ```
@@ -215,8 +215,8 @@ class SyndicationService {
   }
 }
 
-// @Provider — RPC and clock constructors are inert.
-function provideSyndications(config: RpcConfig): SyndicationService {
+// @Assembly — RPC and clock constructors are inert.
+function bindSyndications(config: RpcConfig): SyndicationService {
   var cache = new SyndicationCache();
   var stats = new SyndicationStatistics();
   var source = new SyndicationRpcClient(config);
@@ -362,7 +362,7 @@ A Pure standalone function would also pass. Immutable DTOs with little behavior 
 
 ## What lint can establish
 
-A class claiming PureState while reading a clock fails a semantic contract. A Provider running a server fails its assembly contract. These are locally checkable errors.
+A class claiming PureState while reading a clock fails a semantic contract. An Assembly function running a server fails its assembly contract. These are locally checkable errors.
 
 A class with several state groups, many dependencies, or unrelated parameter-only helpers is a candidate for decomposition. Those observations can support configurable diagnostics, but neither a line-count limit nor a method graph proves conceptual responsibility. Complex classes may pass the basic contract checker; small classes may still have poor responsibilities.
 

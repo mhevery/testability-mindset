@@ -1,7 +1,7 @@
 # testability-mindset
 How to think about testable code.
 
-Five colors distinguish Pure calculations, PureState objects, Effects, Providers, and Tests. Ownership boundaries explain when mutation stays contained; contracts make those boundaries locally checkable.
+Five colors distinguish Pure calculations, PureState objects, Effects, Assembly, and Tests. Ownership boundaries explain when mutation stays contained; contracts make those boundaries locally checkable.
 
 1. [How to use this book](./chapters/00_how_to_use.md)
 2. [Coloring your code](./chapters/01_code_concerns.md)

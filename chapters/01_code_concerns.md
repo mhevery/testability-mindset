@@ -15,7 +15,7 @@ We will color-code five kinds of code:
 * 🟢 **Pure** code calculates. Its observable behavior depends only on its explicit inputs.
 * 🟡 **PureState** code manages deterministic, explicitly owned mutable state.
 * 🟥 **Effect** code interacts. It accesses ambient state, environmental inputs, or external systems.
-* 🔷 **Provider** code assembles. It chooses implementations and connects objects into a working application.
+* 🔷 **Assembly** code assembles. It chooses implementations and connects objects into a working application.
 * ⚫ **Test** code exercises. It assembles the code under test, applies a stimulus, and asserts the result.
 
 Each color has a different job, so each color needs different design rules.
@@ -370,9 +370,9 @@ This “taint” is contagious. A long chain of otherwise deterministic methods 
 
 The rule is not a moral judgment. Effect code is not bad code. The classification tells us what guarantees the code can provide and what kind of test it requires.
 
-## 🔷 Provider code assembles
+## 🔷 Assembly code assembles
 
-Pure, PureState, and Effect code are the building blocks of an application. Provider code chooses the blocks and connects them into an object graph.
+Pure, PureState, and Effect code are the building blocks of an application. Assembly code chooses the blocks and connects them into an object graph.
 
 Different environments need different graphs:
 
@@ -382,11 +382,11 @@ Different environments need different graphs:
 * **Unit tests** may construct one small subgraph with owned PureState fakes.
 * **End-to-end tests** may use a complete graph with a fake payment service.
 
-A production Provider for the checkout application could look like this:
+A production Assembly function for the checkout application could look like this:
 
 ```ts
-// @Provider
-function provideCheckoutService(config: Config): CheckoutService {
+// @Assembly
+function bindCheckoutService(config: Config): CheckoutService {
   var database = new Database(config.databaseUrl);
   var prices = new DatabasePriceCatalog(database);
   var payments = new HttpPaymentGateway(
@@ -407,9 +407,9 @@ function provideCheckoutService(config: Config): CheckoutService {
 }
 ```
 
-The Provider knows which concrete implementations to use. `CheckoutService` only asks for the collaborators it needs.
+The Assembly function knows which concrete implementations to use. `CheckoutService` only asks for the collaborators it needs.
 
-### Providers construct; they do not run
+### Assembly constructs; it does not run
 
 Creating the graph should not start useful work or trigger external effects. Construction and execution are separate phases:
 
@@ -419,35 +419,35 @@ function main(): void {
   var config = loadConfig();
 
   // Construction phase: choose implementations and create the graph.
-  var checkout = provideCheckoutService(config);
+  var checkout = bindCheckoutService(config);
 
   // Execution phase: handle input and perform effects.
   runPointOfSale(checkout);
 }
 ```
 
-`loadConfig()` is itself an Effect, so it happens at the application's outer boundary before the Provider is called. The important boundary is that the Provider and constructors do not unexpectedly query databases, start threads, send requests, or process work.
+`loadConfig()` is itself an Effect, so it happens at the application's outer boundary before the Assembly function is called. The important boundary is that Assembly code and constructors do not unexpectedly query databases, start threads, send requests, or process work.
 
 Minimal constructors make object graphs safe to assemble. A caller can create a component, inspect it, replace a collaborator, or place it in a test without accidentally performing an irreversible action.
 
-Provider code should:
+Assembly code should:
 
-* **Choose concrete implementations.** For example, the production Provider can choose `HttpPaymentGateway`, while a test Provider chooses `InMemoryPaymentGateway`. Keeping this choice in the Provider lets the rest of the application depend on the role of a payment gateway rather than on one particular implementation.
-* **Supply configuration that has already been obtained.** For example, the bootstrap code can read the payment URL from the environment and pass it to the Provider as `config.paymentUrl`. This keeps environmental access explicit and prevents configuration lookups from being scattered throughout constructors.
-* **Construct objects.** For example, the Provider creates `PriceCalculator`, `DatabaseReceiptStore`, and `CheckoutService`. Centralizing construction makes object lifetimes visible and gives the application one place to manage them.
-* **Connect dependencies.** For example, the Provider passes the payment gateway, receipt store, clock, and calculator to `CheckoutService`. This makes the application's dependency graph explicit instead of allowing components to locate collaborators through global state.
-* **Return the completed graph.** For example, `provideCheckoutService()` returns a fully usable `CheckoutService` rather than leaving the caller to set additional fields. A complete graph avoids partially initialized objects and makes construction consistent across callers.
+* **Choose concrete implementations.** For example, production Assembly code can choose `HttpPaymentGateway`, while test Assembly code chooses `InMemoryPaymentGateway`. Keeping this choice in Assembly code lets the rest of the application depend on the role of a payment gateway rather than on one particular implementation.
+* **Supply configuration that has already been obtained.** For example, the bootstrap code can read the payment URL from the environment and pass it to the Assembly function as `config.paymentUrl`. This keeps environmental access explicit and prevents configuration lookups from being scattered throughout constructors.
+* **Construct objects.** For example, Assembly code creates `PriceCalculator`, `DatabaseReceiptStore`, and `CheckoutService`. Centralizing construction makes object lifetimes visible and gives the application one place to manage them.
+* **Connect dependencies.** For example, Assembly code passes the payment gateway, receipt store, clock, and calculator to `CheckoutService`. This makes the application's dependency graph explicit instead of allowing components to locate collaborators through global state.
+* **Return the completed graph.** For example, `bindCheckoutService()` returns a fully usable `CheckoutService` rather than leaving the caller to set additional fields. A complete graph avoids partially initialized objects and makes construction consistent across callers.
 
-Provider code should not:
+Assembly code should not:
 
-* **Contain pricing or other business rules.** For example, a Provider should not choose a tax rate based on the customer's address while constructing `PriceCalculator`. Doing so hides a business decision in assembly code, where it is harder to discover, reuse, and test independently.
+* **Contain pricing or other business rules.** For example, an Assembly function should not choose a tax rate based on the customer's address while constructing `PriceCalculator`. Doing so hides a business decision in assembly code, where it is harder to discover, reuse, and test independently.
 * **Perform the application's useful work.** For example, constructing `CheckoutService` should not immediately charge a card or save a receipt. Otherwise, merely creating the object graph could trigger an irreversible action before the caller is ready.
 * **Hide database queries or network requests in constructors.** For example, `new DatabasePriceCatalog(database)` should record its database dependency, not immediately load every price. Hidden I/O makes construction slow and failure-prone and prevents tests from assembling the graph safely.
-* **Mix graph assembly with request handling.** For example, a Provider should not read an HTTP checkout request while it is choosing the payment gateway implementation. Assembly normally happens once at startup, while request handling happens repeatedly, so combining them confuses their lifetimes and responsibilities.
+* **Mix graph assembly with request handling.** For example, an Assembly function should not read an HTTP checkout request while it is choosing the payment gateway implementation. Assembly normally happens once at startup, while request handling happens repeatedly, so combining them confuses their lifetimes and responsibilities.
 
 The place where the complete production graph is assembled is often called the **composition root**. Ideally, concrete Effect implementations are known there and in only a small number of other infrastructure-focused places.
 
-Our example places all composition in a single function, but real application graphs can be vast. In practice, an application usually has many Provider functions, each responsible for assembling one meaningful part of the graph—for example, `providePayments()`, `provideInventory()`, or `provideCheckout()`. A higher-level Provider composes those smaller graphs into the complete application. Providers are deliberately composable so construction remains under the caller's control: a staging or test Provider can reuse most of the production graph while replacing only the payment gateway, database, or other part that differs. This allows implementations to be exchanged at clear boundaries without duplicating or changing the rest of the application's construction.
+Our example places all composition in a single function, but real application graphs can be vast. In practice, an application usually has many Assembly functions, each responsible for assembling one meaningful part of the graph—for example, `bindPayments()`, `bindInventory()`, or `bindCheckout()`. A higher-level Assembly function composes those smaller graphs into the complete application. Assembly functions are deliberately composable so construction remains under the caller's control: staging or test Assembly code can reuse most of the production graph while replacing only the payment gateway, database, or other part that differs. This allows implementations to be exchanged at clear boundaries without duplicating or changing the rest of the application's construction.
 
 
 ## ⚫ Test code exercises
@@ -506,7 +506,7 @@ function testCheckoutChargesAndStoresReceipt(): void {
 }
 ```
 
-Test code has broad permission to assemble whichever graph is useful. That is why it deserves its own category rather than being called Provider code. It also applies stimuli and makes assertions—responsibilities that production Providers do not have.
+Test code has broad permission to assemble whichever graph is useful. That is why it deserves its own category rather than being called Assembly code. It also applies stimuli and makes assertions—responsibilities that production Assembly functions do not have.
 
 This freedom does not mean tests should leak state. A good test remains:
 
@@ -523,7 +523,7 @@ The in-memory recording implementations above are PureState, while the fixed clo
 When reading a class or function, ask these questions in order:
 
 1. **Does it apply a stimulus and assert an outcome?** It is Test code.
-2. **Does it choose implementations and assemble an object graph?** It is Provider code.
+2. **Does it choose implementations and assemble an object graph?** It is Assembly code.
 3. **Does it read or change ambient or external state?** It is Effect code.
 4. **Does it manage deterministic state through explicit reads and updates?** It is PureState code; inspect method contracts and instance ownership.
 5. **Is its behavior determined entirely by explicit inputs, with no externally observable mutation?** It is Pure code, even if its implementation uses private PureState.
@@ -536,7 +536,7 @@ Some code will require judgment. A cache, for example, contains mutation. A cach
 
 ### Separate concerns by color
 
-Each class should have one architectural role. A Pure domain object should not save itself. An Effect repository should not decide business policy. A Provider should not process a checkout. A test helper should not become a production dependency.
+Each class should have one architectural role. A Pure domain object should not save itself. An Effect repository should not decide business policy. An Assembly function should not process a checkout. A test helper should not become a production dependency.
 
 This separation allows each kind of code to be understood and tested according to its guarantees.
 
@@ -582,7 +582,7 @@ The five colors describe five different responsibilities:
 | 🟢 **Pure** | Calculate from explicit inputs | No ambient effects or mutation of caller-owned state |
 | 🟡 **PureState** | Manage deterministic owned state | Declare state access and respect ownership boundaries |
 | 🟥 **Effect** | Interact with state outside the calculation | Keep interactions focused and replaceable |
-| 🔷 **Provider** | Choose implementations and assemble the graph | Construct without executing useful work |
+| 🔷 **Assembly** | Choose implementations and assemble the graph | Construct without executing useful work |
 | ⚫ **Test** | Construct, stimulate, and assert | Keep each test isolated and deterministic |
 
 Effects are not defects. Every useful application eventually interacts with the world. Testable design keeps that interaction at deliberate boundaries so it does not contaminate code that could remain deterministic.

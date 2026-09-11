@@ -1,6 +1,6 @@
 # Flaw: Brittle Global State and Singletons
 
-Adapted from [Brittle Global State & Singletons](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-brittle-global-state-singletons.md). The examples preserve the original situations while using this book's five colors and ownership contracts. Framework-specific injection becomes explicit Provider code.
+Adapted from [Brittle Global State & Singletons](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-brittle-global-state-singletons.md). The examples preserve the original situations while using this book's five colors and ownership contracts. Framework-specific injection becomes explicit Assembly code.
 
 A mutable object's type can be 🟡 PureState while access to a globally reachable instance is 🟥 Effect. The problem is the access path: two otherwise independent tests can communicate through the same state.
 
@@ -70,8 +70,8 @@ class CreditCardProcessor implements CardProcessor {
   }
 }
 
-// @Provider — Database construction stores configuration; no connection yet.
-function provideProcessor(config: ProcessorConfig): CreditCardProcessor {
+// @Assembly — Database construction stores configuration; no connection yet.
+function bindProcessor(config: ProcessorConfig): CreditCardProcessor {
   var db = new Database(config.database);
   return new CreditCardProcessor(move(db), config);
 }
@@ -197,16 +197,16 @@ class Cache {
   function get(id: string): UserSnapshot | undefined { return users.get(id); }
 }
 
-// @Provider @ReturnsFresh
-function provideCache(): Cache {
+// @Assembly @ReturnsFresh
+function bindCache(): Cache {
   var eviction = new LruEvictionStrategy(); // @PureState, inert construction.
   return new Cache(move(eviction));
 }
 
 // @Test @Isolated
 function testCacheOwnership(): void {
-  var first = provideCache();
-  var second = provideCache();
+  var first = bindCache();
+  var second = bindCache();
   first.put(new UserSnapshot("kim", "Kim"));
   expect(first.get("kim")?.name).toBe("Kim");
   expect(second.get("kim")).toBeUndefined();
@@ -291,7 +291,7 @@ function testInjectedLogin(): void {
 
 The test uses a harmless implementation, but the separately checked dashboard contract is Effect. Static isolation needs a behavior-generic consumer or a checked narrower specialization. Injection alone does not establish that stronger proof.
 
-A Provider may create one service per application and pass it through explicit lifetime-checked references. “One per application” is a construction policy, not a static field. The owned example above chooses one service per dashboard for simpler ownership.
+An Assembly function may create one service per application and pass it through explicit lifetime-checked references. “One per application” is a construction policy, not a static field. The owned example above chooses one service per dashboard for simpler ownership.
 
 ## NetworkLoadCalculator: flag setup and cleanup
 
@@ -353,7 +353,7 @@ function testMaximum(): void {
 }
 ```
 
-Production reads flags at an Effect bootstrap boundary, then supplies the value. Reading flags inside a Provider would still violate this book's assembly-only rule.
+Production reads flags at an Effect bootstrap boundary, then supplies the value. Reading flags inside an Assembly function would still violate this book's assembly-only rule.
 
 ## RpcClient: static initialization chooses the backend once
 
@@ -385,7 +385,7 @@ function testDummyCache(): void {
 
 ```text
 DESIGN-STATIC-INIT RpcClient: import-time flag access and collaborator selection
-  hide application assembly. Move selection to a Provider receiving a flag value.
+  hide application assembly. Move selection to an Assembly function receiving a flag value.
 CONTRACT-ISOLATION testDummyCache: flag and singleton access cross the test region.
 ```
 
@@ -417,21 +417,21 @@ class RpcCache {
   }
 }
 
-// @Provider
-function provideClient(useReal: boolean): RpcClient {
+// @Assembly
+function bindClient(useReal: boolean): RpcClient {
   var backend = useReal ? new RealBackend() : new DummyBackend();
   return new RpcClient(move(backend));
 }
 
 // @Test — explicit integration test, external resources still need management.
 function testRealBackend(): void {
-  var client = provideClient(true);
+  var client = bindClient(true);
   expect(client.fetch("known-key")).toBe("known-value");
 }
 
 // @Test — selected implementation is local; broad contract remains Effect.
 function testDummyCache(): void {
-  var client = provideClient(false);
+  var client = bindClient(false);
   var cache = new RpcCache(move(client));
   expect(cache.get("key")).toBe("dummy-value");
 }

@@ -250,7 +250,7 @@ class UpdateBug {
 }
 ```
 
-The Provider must supply the lock appropriate to the store. Direct injection does not prove that two arbitrarily chosen objects form a correct synchronization protocol. If the database must enforce locking internally, an atomic `saveUnderLock()` or transaction API may be a better abstraction.
+Assembly code must supply the lock appropriate to the store. Direct injection does not prove that two arbitrarily chosen objects form a correct synchronization protocol. If the database must enforce locking internally, an atomic `saveUnderLock()` or transaction API may be a better abstraction.
 
 For tests, use the same ownership-generic operation so the concrete local contracts remain available:
 
@@ -376,7 +376,7 @@ A typed immutable `MembershipRequest` grouping these exact fields can also be a 
 The original allows a binding DSL:
 
 ```ts
-// @Provider @Mutates(bindings) @NoEscape(bindings)
+// @Assembly @Mutates(bindings) @NoEscape(bindings)
 function configure(bindings: BindingBuilder): void {
   bindings.bind(SomeService)
     .annotatedWith(SomeAnnotation)

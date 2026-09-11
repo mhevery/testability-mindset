@@ -5,7 +5,7 @@ The five colors describe different responsibilities:
 * 🟢 **Pure** code calculates without externally observable mutation.
 * 🟡 **PureState** code manages deterministic, explicitly owned state.
 * 🟥 **Effect** code interacts with ambient state or external systems.
-* 🔷 **Provider** code chooses implementations and assembles graphs.
+* 🔷 **Assembly** code chooses implementations and assembles graphs.
 * ⚫ **Test** code constructs, stimulates, and asserts.
 
 Separating these concerns is a good start. We must also control dependencies, preserve method contracts across interfaces, and track ownership when references cross boundaries.
@@ -25,7 +25,7 @@ Pure and PureState belong together in the foundation of the architecture. They a
 ```text
 Test
   ↓
-Provider
+Assembly
   ↓
 Effect
   ↓
@@ -39,7 +39,7 @@ Arrows may skip levels. This diagram describes allowed implementation dependenci
 | Pure | Pure and PureState | Mutations must stay private or belong to a fresh result transferred to the caller. |
 | PureState | Pure and PureState | Declare accessed state; no ambient effects. |
 | Effect | Pure, PureState, Effect | Keep external behavior explicit and replaceable. |
-| Provider | Production roles | Assemble without invoking external effects or running application workflows. |
+| Assembly | Production roles | Assemble without invoking external effects or running application workflows. |
 | Test | Any role needed by the test | Production code must not depend back on Test; isolation is a separate guarantee. |
 
 Interface declarations live at the boundary that needs them and carry behavioral contracts. Merely declaring an interface does not make its methods Pure. Generic containers may hold opaque capabilities without invoking them; their contracts must still account for retained references and lifetimes.
@@ -167,7 +167,7 @@ The checkout-facing boundary should own `PaymentGateway`, rather than placing it
 ```text
 Checkout code       → PaymentGateway contract
 HTTP infrastructure → PaymentGateway contract
-Provider code       → both concrete classes
+Assembly code       → both concrete classes
 ```
 
 This keeps the abstraction focused on the consumer's needs and allows replacement without introducing a concrete upward import. Interface placement and effect classification answer different questions.
@@ -239,14 +239,14 @@ A DTO can group these explicit inputs, such as `OfferEvaluation(offer, evaluated
 
 Use an interface when the consumer needs an ongoing capability. Pass data when the consumer only needs a snapshot. Injection controls implementation choice; passing the snapshot removes the capability from the calculation.
 
-## Providers control construction
+## Assembly controls construction
 
-An Effect should ask for a collaborator rather than import a concrete Provider or use a service locator:
+An Effect should ask for a collaborator rather than import a concrete Assembly implementation or use a service locator:
 
 ```ts
 // Bad: hidden construction policy during execution.
 function checkout(method: PaymentMethod, amount: Money): TransactionId {
-  return providePaymentGateway().charge(method, amount);
+  return bindPaymentGateway().charge(method, amount);
 }
 
 // Better: construction supplies the dependency.
@@ -255,22 +255,22 @@ class CheckoutService {
   constructor(private gateway: PaymentGateway) {}
 }
 
-// @Provider — constructors only initialize and retain declared dependencies.
-function provideCheckout(config: Config): CheckoutService {
+// @Assembly — constructors only initialize and retain declared dependencies.
+function bindCheckout(config: Config): CheckoutService {
   var gateway = new HttpPaymentGateway(config.paymentUrl);
   return new CheckoutService(gateway);
 }
 ```
 
-Provider is an assembly role, not a synonym for arbitrary Effect. Constructors may initialize private state and retain dependencies under declared ownership contracts. They should not query a database, send a request, or start background work. Environmental configuration is obtained before construction.
+Assembly is a construction role, not a synonym for arbitrary Effect. Constructors may initialize private state and retain dependencies under declared ownership contracts. They should not query a database, send a request, or start background work. Environmental configuration is obtained before construction.
 
 ### Request-scoped construction through an interface
 
-A server may need a fresh graph for each request. Inject a factory contract instead of making it import a concrete Provider:
+A server may need a fresh graph for each request. Inject a factory contract instead of making it import a concrete Assembly implementation:
 
 ```ts
 interface RequestHandlerFactory {
-  // @Provider — assembles; transfers an owned handler graph.
+  // @Assembly — assembles; transfers an owned handler graph.
   create(requestId: string): RequestHandler;
 }
 
@@ -284,7 +284,7 @@ class HttpServer {
   }
 }
 
-// @Provider
+// @Assembly
 class ProductionRequestFactory implements RequestHandlerFactory {
   function create(requestId: string): RequestHandler {
     // Construct descriptors; perform no database I/O here.
@@ -294,13 +294,13 @@ class ProductionRequestFactory implements RequestHandlerFactory {
 }
 ```
 
-This is an explicit allowance for an injected assembly capability; the server still must not depend on the concrete Provider. The factory's retention and result contracts describe which state is fresh and which dependencies are shared. A fresh handler wrapper alone does not prove that all its collaborators belong to the request.
+This is an explicit allowance for an injected assembly capability; the server still must not depend on the concrete Assembly implementation. The factory's retention and result contracts describe which state is fresh and which dependencies are shared. A fresh handler wrapper alone does not prove that all its collaborators belong to the request.
 
 Passing existing collaborators also creates reference relationships. A setter that stores an audit log needs a retention contract even when both types are legally imported.
 
 ## Test dependencies and isolation
 
-Tests may assemble Pure, PureState, and Effect objects. Production must never depend on test fixtures, assertions, or test Providers.
+Tests may assemble Pure, PureState, and Effect objects. Production must never depend on test fixtures, assertions, or test Assembly functions.
 
 ```ts
 // @Test

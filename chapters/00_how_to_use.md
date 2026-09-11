@@ -1,6 +1,6 @@
 # How to Use This Book
 
-This book uses five colors to reason about testability: Pure calculations, PureState objects, Effects, Providers, and Tests. The colors describe responsibilities. Ownership boundaries explain when mutation is contained, and method contracts describe how code may access or retain state.
+This book uses five colors to reason about testability: Pure calculations, PureState objects, Effects, Assembly, and Tests. The colors describe responsibilities. Ownership boundaries explain when mutation is contained, and method contracts describe how code may access or retain state.
 
 Start with [Color-Coding Your Code](./01_code_concerns.md) for the mental model. Continue with [Compile-Time Dependencies](./02_compile_dependencies.md) for the relationship between architecture, interfaces, and behavior. [Checking Colors and Ownership with a Linter](./07_linter.md) develops a proposed system for checking those promises locally, with examples of accepted and rejected code.
 

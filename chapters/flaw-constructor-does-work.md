@@ -2,7 +2,7 @@
 
 Adapted from [Constructor does Real Work](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-constructor-does-work.md), including all eight before/after scenarios. The original warns about construction that fixes collaborators, queries the environment, or leaves objects requiring a second initialization step.
 
-In this book, constructors initialize private state and record declared dependencies. 🔷 Providers select implementations and assemble graphs. 🟥 Effects perform external work. A 🟡 PureState object may create private collections in its constructor; the presence of `new`, a loop, or a conditional is not by itself a violation.
+In this book, constructors initialize private state and record declared dependencies. 🔷 Assembly functions select implementations and assemble graphs. 🟥 Effects perform external work. A 🟡 PureState object may create private collections in its constructor; the presence of `new`, a loop, or a conditional is not by itself a violation.
 
 These are proposed diagnostics for TypeScript-like sketches, not an executed linter. Contract errors are distinguished from the optional [strict design profile](./07_linter.md#design-diagnostics-for-the-four-flaws). Value records are deeply immutable. Omitted service implementations must supply the stated contracts. Constructor assignments to newly allocated `this` are allowed; `@Owns` and `@Retains` declare transferred collaborators. A fixed service may remain Effect and still pass: passing lint does not mean every operation is Pure or every test is statically isolated.
 
@@ -27,7 +27,7 @@ function testHouse(): void {
 ```text
 DESIGN-CONSTRUCTION House.kitchen: field initializer selects concrete service Kitchen.
 DESIGN-CONSTRUCTION House.constructor: selects concrete service Bedroom.
-  Receive collaborators; move application graph choices to a Provider.
+  Receive collaborators; move application graph choices to an Assembly function.
 ```
 
 These are architecture errors under the selected profile, not proof of external I/O. If the rooms were only private data containers, allocation could be valid.
@@ -43,8 +43,8 @@ class House {
   function prepare(): void { kitchen.prepare(); bedroom.prepare(); }
 }
 
-// @Provider — service constructors are inert.
-function provideHouse(): House {
+// @Assembly — service constructors are inert.
+function bindHouse(): House {
   var kitchen = new Kitchen();
   var bedroom = new Bedroom();
   return new House(move(kitchen), move(bedroom));
@@ -84,7 +84,7 @@ CONTRACT-CONSTRUCTION Garden.constructor: BootsWithMassiveStaticInitBlock
 DESIGN-CONSTRUCTION Garden.constructor: overrides the supplied gardener's setup.
 ```
 
-Adding a mutation permission would address the first error, but the constructor would still choose the caller's workday and boots. The source repair introduces a gardener Provider. Here we also remove the boots' static initializer and construct a complete gardener directly:
+Adding a mutation permission would address the first error, but the constructor would still choose the caller's workday and boots. The source repair introduces a gardener Assembly function. Here we also remove the boots' static initializer and construct a complete gardener directly:
 
 ```ts
 // @Pure
@@ -117,15 +117,15 @@ class Garden {
   function gardenerIsWorking(): boolean { return joe.isWorking(); }
 }
 
-// @Provider @ReturnsFresh
-function provideGarden(workday: Workday, boots: Boots): Garden {
+// @Assembly @ReturnsFresh
+function bindGarden(workday: Workday, boots: Boots): Garden {
   var joe = new Gardener(workday, boots);
   return new Garden(move(joe));
 }
 
 // @Test @Isolated
 function testAphidPlague(): void {
-  var garden = provideGarden(new Workday(1), new Boots("lightweight"));
+  var garden = bindGarden(new Workday(1), new Boots("lightweight"));
   garden.infectWithAphids();
   garden.notifyGardenerSickShrubbery();
   expect(garden.gardenerIsWorking()).toBe(true);
@@ -156,7 +156,7 @@ DESIGN-DIRECT AccountView.constructor: only the returned user is needed;
   pass UserSnapshot rather than locating it through RPCClient.
 ```
 
-The original uses a Guice provider that calls `getUser()`. Here that call must be Effect, because our Provider annotation promises no external execution:
+The original uses a Guice factory method that calls `getUser()`. Here that call must be Effect, because our Assembly annotation promises no external execution:
 
 ```ts
 // @Pure
@@ -178,7 +178,7 @@ function testAccountView(): void {
 }
 ```
 
-Construction needs only user data. Loading remains explicit, replaceable execution. Creating a Pure value after I/O does not turn the enclosing loader into Provider or Pure code.
+Construction needs only user data. Loading remains explicit, replaceable execution. Creating a Pure value after I/O does not turn the enclosing loader into Assembly or Pure code.
 
 ## Car: reading a file and building an EngineFactory
 
@@ -216,12 +216,12 @@ class Car {
 }
 
 interface EngineFactory {
-  // @Provider @ReturnsFresh
+  // @Assembly @ReturnsFresh
   create(model: string): Engine;
 }
 
-// @Provider @NoEscape(factory)
-function provideCar(factory: EngineFactory, model: string): Car {
+// @Assembly @NoEscape(factory)
+function bindCar(factory: EngineFactory, model: string): Car {
   var engine = factory.create(model);
   return new Car(move(engine));
 }
@@ -229,7 +229,7 @@ function provideCar(factory: EngineFactory, model: string): Car {
 // @Effect @NoEscape(factory)
 function loadCar(file: FilePath, factory: EngineFactory): Car {
   var model = readEngineModel(file);
-  return provideCar(factory, model);
+  return bindCar(factory, model);
 }
 
 // @Test
@@ -240,7 +240,7 @@ function testCarWithFakeEngine(): void {
 }
 ```
 
-`loadCar()` is an outer bootstrap function allowed to sequence environmental input and assembly. If the third-party factory also opens devices, its adapter must declare Effect and run at this outer boundary instead of inside `provideCar()`.
+`loadCar()` is an outer bootstrap function allowed to sequence environmental input and assembly. If the third-party factory also opens devices, its adapter must declare Effect and run at this outer boundary instead of inside `bindCar()`.
 
 ## PingServer: reading a port flag and opening a socket
 
@@ -258,7 +258,7 @@ CONTRACT-CONSTRUCTION PingServer.constructor: FLAG_PORT.get is ambient input;
 DESIGN-CONSTRUCTION PingServer.constructor: socket implementation is fixed here.
 ```
 
-Passing only a port removes the flag lookup but still forces socket creation. The source's better dependency is the socket itself. Under our stricter construction rule, even a socket Provider must not open a real socket:
+Passing only a port removes the flag lookup but still forces socket creation. The source's better dependency is the socket itself. Under our stricter construction rule, even a socket Assembly function must not open a real socket:
 
 ```ts
 interface PingSocket {
@@ -328,14 +328,14 @@ class CurlingTeamMember {
   function jerseyMaterial(): string { return jersey.material(); }
 }
 
-// @Provider
-function provideJersey(suede: boolean): Jersey {
+// @Assembly
+function bindJersey(suede: boolean): Jersey {
   return suede ? new SuedeJersey() : new NylonJersey();
 }
 
-// @Provider
-function provideMember(suede: boolean): CurlingTeamMember {
-  return new CurlingTeamMember(provideJersey(suede));
+// @Assembly
+function bindMember(suede: boolean): CurlingTeamMember {
+  return new CurlingTeamMember(bindJersey(suede));
 }
 
 // @Test @Isolated
@@ -345,7 +345,7 @@ function testAnyJersey(): void {
 }
 ```
 
-The boolean is explicit data. Choosing between jersey Providers instead of directly constructing values is also valid when their construction grows more involved. Both branches must honor Provider contracts.
+The boolean is explicit data. Choosing between jersey Assembly functions instead of directly constructing values is also valid when their construction grows more involved. Both branches must honor Assembly contracts.
 
 ## VisualVoicemail: moving the work to initialize()
 
@@ -390,13 +390,13 @@ class VisualVoicemail {
   function callCount(): int { return calls.size; }
 }
 
-// @Provider — Server stores config and performs no I/O in its constructor.
-function provideServer(config: ServerConfig): Server { return new Server(config); }
+// @Assembly — Server stores config and performs no I/O in its constructor.
+function bindServer(config: ServerConfig): Server { return new Server(config); }
 
 // @Effect — config loading and call retrieval are execution.
 function loadVoicemail(path: FilePath, user: UserSnapshot): VisualVoicemail {
   var config = readServerConfig(path);
-  var server = provideServer(config);
+  var server = bindServer(config);
   var calls = server.getCallsFor(user); // Immutable snapshot result.
   return new VisualVoicemail(calls);
 }
@@ -409,7 +409,7 @@ function testVoicemailSnapshot(): void {
 }
 ```
 
-The source's configuration, server, and call-list Providers become one inert Provider and an Effect loader. This sketch assumes the server's request API manages its own transient resources. If it owns a persistent connection, the loader must close it on all exits or transfer ownership to a longer-lived application graph.
+The source's configuration, server, and call-list factory methods become one inert Assembly function and an Effect loader. This sketch assumes the server's request API manages its own transient resources. If it owns a persistent connection, the loader must close it on all exits or transfer ownership to a longer-lived application graph.
 
 For an editable voicemail model, use PureState with an owned call collection and declared mutation methods. Neither form needs a partly initialized instance.
 
@@ -463,8 +463,8 @@ class PlaylistGenerator {
   function buildPlaylist(query: Query): Playlist { return index.search(query); }
 }
 
-// @Provider — full index descriptor is inert; search performs external work.
-function provideGenerator(config: LibraryConfig): PlaylistGenerator {
+// @Assembly — full index descriptor is inert; search performs external work.
+function bindGenerator(config: LibraryConfig): PlaylistGenerator {
   var repo = new FullLibraryIndex(config);
   var index = new VideoPlaylistIndex(move(repo));
   return new PlaylistGenerator(move(index));
@@ -484,7 +484,7 @@ Every path now uses the same explicit constructor dependencies. The in-memory re
 
 ## Constructor rules that remain local
 
-The checker combines the constructor body, field initializers, and called constructor/method summaries. It rejects external execution, incompatible mutation or retention, and missing required initialization. The optional design profile also flags service selection outside Providers and overridable calls on a partly constructed receiver.
+The checker combines the constructor body, field initializers, and called constructor/method summaries. It rejects external execution, incompatible mutation or retention, and missing required initialization. The optional design profile also flags service selection outside Assembly functions and overridable calls on a partly constructed receiver.
 
 Private state initialization remains allowed:
 

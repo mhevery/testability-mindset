@@ -15,7 +15,7 @@ This chapter describes a proposed system, not an implemented linter or existing 
 | `@Pure` | Results depend only on explicit stable inputs; no ambient effects or mutation of pre-existing caller-observable state. Private allocation and mutation are permitted. |
 | `@PureState` | The type manages deterministic state through declared operations, without ambient access or external interaction. Method contracts identify the state accessed. |
 | `@Effect` | Ambient or external interaction is permitted. Ownership and retention contracts still apply. |
-| `@Provider` | Code assembles objects and transfers or connects declared dependencies without external effects or application execution. |
+| `@Assembly` | Code assembles objects and transfers or connects declared dependencies without external effects or application execution. |
 | `@Test` | Code may assemble, stimulate, and assert. Isolation requires an additional constraint; this annotation alone does not promise it. |
 
 Class annotations establish defaults and restrictions. Method contracts give the details. `@PureState` on `Map` cannot mean that `set()` is a Pure operation, and `@Effect` on a database class need not mean its constructor performs I/O. Constructors have their own contracts.
@@ -483,7 +483,7 @@ Clearing `sharedGateway` afterward does not establish isolation: another test co
 
 If a test passes a recording gateway through an interface that permits arbitrary Effect, isolation cannot be proved from that broad contract. Use an explicitly behavior-generic consumer or a separately checked narrower specialization. The checker must not silently infer a stronger promise by scanning a particular runtime object graph.
 
-## Example 13: Providers and constructors
+## Example 13: Assembly and constructors
 
 ```ts
 // @Effect
@@ -495,8 +495,8 @@ class HttpGateway {
   function charge(amount: Money): void { ... }
 }
 
-// @Provider
-function provideGateway(config: ImmutableConfig): HttpGateway {
+// @Assembly
+function bindGateway(config: ImmutableConfig): HttpGateway {
   return new HttpGateway(config.paymentUrl); // OK: checked constructor contract.
 }
 ```
@@ -509,7 +509,7 @@ constructor(url: string) {
 }
 ```
 
-A Provider may initialize owned state, call other Providers, and calculate configuration values. Recognizing arbitrary "business logic" from syntax is not generally possible. A practical checker enforces declared assembly APIs and forbids execution APIs; the choice of which APIs represent assembly still requires design review.
+An Assembly function may initialize owned state, call other Assembly functions, and calculate configuration values. Recognizing arbitrary "business logic" from syntax is not generally possible. A practical checker enforces declared assembly APIs and forbids execution APIs; the choice of which APIs represent assembly still requires design review.
 
 Returning a newly allocated service does not necessarily justify `@ReturnsFresh` for its entire graph. If it borrows an existing connection pool, the result contract must declare that retained dependency and its lifetime. Freshness must not be inferred solely from `new`.
 
