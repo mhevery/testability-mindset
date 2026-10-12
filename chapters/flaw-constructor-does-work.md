@@ -2,23 +2,23 @@
 
 Adapted from [Constructor does Real Work](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-constructor-does-work.md), including all eight before/after scenarios. The original warns about construction that fixes collaborators, queries the environment, or leaves objects requiring a second initialization step.
 
-In this book, constructors initialize private state and record declared dependencies. 🔷 Assembly functions select implementations and assemble graphs. 🟥 Effects perform external work. A 🟡 PureState object may create private collections in its constructor; the presence of `new`, a loop, or a conditional is not by itself a violation.
+In this book, constructors initialize private state and record declared dependencies. `@Assembly` functions select implementations and assemble graphs. `@Effect` adapters perform external work. A `@Pure(state)` object may create private collections in its constructor; the presence of `new`, a loop, or a conditional is not by itself a violation.
 
-These are proposed diagnostics for TypeScript-like sketches, not an executed linter. Contract errors are distinguished from the optional [strict design profile](./07_linter.md#design-diagnostics-for-the-four-flaws). Value records are deeply immutable. Omitted service implementations must supply the stated contracts. Constructor assignments to newly allocated `this` are allowed; `@Owns` and `@Retains` declare transferred collaborators. A fixed service may remain Effect and still pass: passing lint does not mean every operation is Pure or every test is statically isolated.
+These are proposed diagnostics for TypeScript-like sketches, not an executed linter. Contract errors are distinguished from the optional [strict design profile](./07_linter.md#design-diagnostics-for-the-four-flaws). Value records are deeply immutable. Omitted service implementations must supply the stated contracts. Constructor assignments to newly allocated `this` are allowed; `@Owns` and `@Retains` declare transferred collaborators. A fixed service may remain `@Bound` to effectful collaborators or implement an `@Effect` adapter and still pass: passing lint does not mean every operation is pure or every test is statically isolated.
 
 ## House: new at a field declaration or in a constructor
 
 The source's `House` chooses its own kitchen and bedroom:
 
 ```ts
-// @Effect — in this variant Kitchen and Bedroom are replaceable services.
+// @Bound — claimed replaceable service coordinator, violated by hidden construction.
 class House {
   private kitchen = new Kitchen();
   private bedroom: Bedroom;
   constructor() { bedroom = new Bedroom(); }
 }
 
-// @Test
+// @Test(bound)
 function testHouse(): void {
   var house = new House(); // Cannot select DummyKitchen or DummyBedroom.
 }
@@ -27,19 +27,19 @@ function testHouse(): void {
 ```text
 DESIGN-CONSTRUCTION House.kitchen: field initializer selects concrete service Kitchen.
 DESIGN-CONSTRUCTION House.constructor: selects concrete service Bedroom.
-  Receive collaborators; move application graph choices to an Assembly function.
+  Receive collaborators; move application graph choices to an `@Assembly` function.
 ```
 
 These are architecture errors under the selected profile, not proof of external I/O. If the rooms were only private data containers, allocation could be valid.
 
 ```ts
-// @Effect
+// @Bound
 class House {
   // @Owns(kitchen) @Retains(kitchen, this)
   // @Owns(bedroom) @Retains(bedroom, this)
   constructor(private kitchen: Kitchen, private bedroom: Bedroom) {}
 
-  // @Effect @Mutates(this) — delegated service bounds.
+  // @Behavior(kitchen.prepare | bedroom.prepare) @Mutates(this) — delegated service behavior.
   function prepare(): void { kitchen.prepare(); bedroom.prepare(); }
 }
 
@@ -50,7 +50,7 @@ function bindHouse(): House {
   return new House(move(kitchen), move(bedroom));
 }
 
-// @Test
+// @Test(bound)
 function testHouseWithDoubles(): void {
   var kitchen = new DummyKitchen();
   var bedroom = new DummyBedroom();
@@ -59,12 +59,12 @@ function testHouseWithDoubles(): void {
 }
 ```
 
-The dummy implementations satisfy the same service interfaces with harmless behavior. The broad service contracts still permit Effect. The test demonstrates replaceability without claiming a static isolation proof.
+The dummy implementations satisfy the same service interfaces with harmless behavior. A static isolation proof requires preserving those concrete bound behaviors through `House`; erased service contracts leave the proof unavailable. The test demonstrates replaceability without claiming more than its contracts prove.
 
 ## Garden: reconfiguring a supplied collaborator
 
 ```ts
-// @PureState — claimed garden model, no ambient interaction allowed.
+// @Pure(state) — claimed garden model, no ambient interaction allowed.
 class Garden {
   private joe: Gardener;
   // @Retains(joe, this) — does not grant mutation or ownership.
@@ -84,7 +84,7 @@ CONTRACT-CONSTRUCTION Garden.constructor: BootsWithMassiveStaticInitBlock
 DESIGN-CONSTRUCTION Garden.constructor: overrides the supplied gardener's setup.
 ```
 
-Adding a mutation permission would address the first error, but the constructor would still choose the caller's workday and boots. The source repair introduces a gardener Assembly function. Here we also remove the boots' static initializer and construct a complete gardener directly:
+Adding a mutation permission would address the first error, but the constructor would still choose the caller's workday and boots. The source repair introduces a gardener `@Assembly` function. Here we also remove the boots' static initializer and construct a complete gardener directly:
 
 ```ts
 // @Pure
@@ -92,7 +92,7 @@ class Workday { constructor(readonly minutes: int) {} }
 // @Pure — description only, no physical activity or I/O.
 class Boots { constructor(readonly material: string) {} }
 
-// @PureState
+// @Pure(state)
 class Gardener {
   private working = false;
   constructor(private workday: Workday, private boots: Boots) {}
@@ -102,7 +102,7 @@ class Gardener {
   function isWorking(): boolean { return working; }
 }
 
-// @PureState
+// @Pure(state)
 class Garden {
   private sickShrubbery = false;
   // @Owns(joe) @Retains(joe, this)
@@ -123,7 +123,7 @@ function bindGarden(workday: Workday, boots: Boots): Garden {
   return new Garden(move(joe));
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testAphidPlague(): void {
   var garden = bindGarden(new Workday(1), new Boots("lightweight"));
   garden.infectWithAphids();
@@ -132,7 +132,7 @@ function testAphidPlague(): void {
 }
 ```
 
-This is an in-memory model, so no test waits for a one-minute or twelve-hour workday. It preserves the source's aphid stimulus and working-state assertion. The owner observes the gardener through the garden after transfer, instead of continuing to use a moved reference. If obtaining real boots requires I/O, perform it at an Effect boundary before assembly.
+This is an in-memory model, so no test waits for a one-minute or twelve-hour workday. It preserves the source's aphid stimulus and working-state assertion. The owner observes the gardener through the garden after transfer, instead of continuing to use a moved reference. If obtaining real boots requires I/O, perform it at an `@Effect` boundary before assembly.
 
 ## AccountView: a singleton and RPC lookup in construction
 
@@ -145,7 +145,7 @@ class AccountView {
   }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testAccountView(): void { var view = new AccountView(); }
 ```
 
@@ -156,7 +156,7 @@ DESIGN-DIRECT AccountView.constructor: only the returned user is needed;
   pass UserSnapshot rather than locating it through RPCClient.
 ```
 
-The original uses a Guice factory method that calls `getUser()`. Here that call must be Effect, because our Assembly annotation promises no external execution:
+The original uses a Guice factory method that calls `getUser()`. Here that call must be `@Effect`, because our `@Assembly` annotation promises no external execution:
 
 ```ts
 // @Pure
@@ -171,14 +171,14 @@ function loadAccountView(client: RPCClient): AccountView {
   return new AccountView(user);
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testAccountView(): void {
   var view = new AccountView(new UserSnapshot("ada", "Ada"));
   expect(view.displayName()).toBe("Ada");
 }
 ```
 
-Construction needs only user data. Loading remains explicit, replaceable execution. Creating a Pure value after I/O does not turn the enclosing loader into Assembly or Pure code.
+Construction needs only user data. Loading remains explicit, replaceable execution. Creating a pure value after I/O does not turn the enclosing loader into `@Assembly` or `@Pure` code.
 
 ## Car: reading a file and building an EngineFactory
 
@@ -192,7 +192,7 @@ class Car {
   }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testCar(): void {
   var car = new Car(new FilePath("engine.config"));
 }
@@ -207,11 +207,11 @@ DESIGN-CONSTRUCTION Car.constructor: constructs EngineFactory to obtain Engine.
 The factory's name is not its contract. This repair assumes `create()` only assembles an inert engine descriptor:
 
 ```ts
-// @Effect
+// @Bound
 class Car {
   // @Owns(engine) @Retains(engine, this)
   constructor(private engine: Engine) {}
-  // @Effect @Mutates(this)
+  // @Behavior(engine.start) @Mutates(this)
   function start(): void { engine.start(); }
 }
 
@@ -232,7 +232,7 @@ function loadCar(file: FilePath, factory: EngineFactory): Car {
   return bindCar(factory, model);
 }
 
-// @Test
+// @Test(bound)
 function testCarWithFakeEngine(): void {
   var engine = new FakeEngine();
   var car = new Car(move(engine));
@@ -240,7 +240,7 @@ function testCarWithFakeEngine(): void {
 }
 ```
 
-`loadCar()` is an outer bootstrap function allowed to sequence environmental input and assembly. If the third-party factory also opens devices, its adapter must declare Effect and run at this outer boundary instead of inside `bindCar()`.
+`loadCar()` is an outer bootstrap function allowed to sequence environmental input and assembly. If the third-party factory also opens devices, its adapter must declare `@Effect` and run at this outer boundary instead of inside `bindCar()`.
 
 ## PingServer: reading a port flag and opening a socket
 
@@ -258,23 +258,23 @@ CONTRACT-CONSTRUCTION PingServer.constructor: FLAG_PORT.get is ambient input;
 DESIGN-CONSTRUCTION PingServer.constructor: socket implementation is fixed here.
 ```
 
-Passing only a port removes the flag lookup but still forces socket creation. The source's better dependency is the socket itself. Under our stricter construction rule, even a socket Assembly function must not open a real socket:
+Passing only a port removes the flag lookup but still forces socket creation. The source's better dependency is the socket itself. Under our stricter construction rule, even a socket `@Assembly` function must not open a real socket:
 
 ```ts
 interface PingSocket {
-  // @Effect @Mutates(this)
+  // @Mutates(this)
   sendPing(): void;
-  // @Effect @Mutates(this)
+  // @Mutates(this)
   close(): void;
 }
 
-// @Effect
+// @Bound
 class PingServer {
   // @Owns(socket) @Retains(socket, this)
   constructor(private socket: PingSocket) {}
-  // @Effect @Mutates(this)
+  // @Behavior(socket.sendPing) @Mutates(this)
   function ping(): void { socket.sendPing(); }
-  // @Effect @Mutates(this)
+  // @Behavior(socket.close) @Mutates(this)
   function close(): void { socket.close(); }
 }
 
@@ -284,7 +284,7 @@ function openPingServer(port: int): PingServer {
   return new PingServer(move(socket));
 }
 
-// @Test
+// @Test(bound)
 function testPingWithFakeSocket(): void {
   var socket = new FakePingSocket();
   var server = new PingServer(move(socket));
@@ -292,7 +292,7 @@ function testPingWithFakeSocket(): void {
   server.close();
 }
 
-// @Test — integration test, not @Isolated.
+// @Test(effect) — integration test, not @Isolated.
 function testCustomPort(): void {
   var server = openPingServer(1234);
   try { server.ping(); } finally { server.close(); }
@@ -338,19 +338,19 @@ function bindMember(suede: boolean): CurlingTeamMember {
   return new CurlingTeamMember(bindJersey(suede));
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testAnyJersey(): void {
   var russ = new CurlingTeamMember(new LightweightJersey());
   expect(russ.jerseyMaterial()).toBe("lightweight");
 }
 ```
 
-The boolean is explicit data. Choosing between jersey Assembly functions instead of directly constructing values is also valid when their construction grows more involved. Both branches must honor Assembly contracts.
+The boolean is explicit data. Choosing between jersey `@Assembly` functions instead of directly constructing values is also valid when their construction grows more involved. Both branches must honor `@Assembly` contracts.
 
 ## VisualVoicemail: moving the work to initialize()
 
 ```ts
-// @PureState
+// @Pure(state)
 class VisualVoicemail {
   private calls: ImmutableList<Call>; // Required, but uninitialized.
   constructor(private user: UserSnapshot) {}
@@ -366,7 +366,7 @@ class VisualVoicemail {
   function setCallsForTest(value: ImmutableList<Call>): void { calls = value; }
 }
 
-// @Test
+// @Test(bound)
 function testWithBypass(): void {
   var voicemail = new VisualVoicemail(dummyUser);
   voicemail.setCallsForTest(buildListOfTestCalls());
@@ -377,7 +377,7 @@ function testWithBypass(): void {
 CONTRACT-INITIALIZATION VisualVoicemail.constructor: required field calls
   is not definitely assigned when construction completes.
 CONTRACT-EFFECT VisualVoicemail.initialize: file access and server lookup
-  exceed @PureState / @Mutates(this).
+  exceed @Pure(state) / @Mutates(this).
 DESIGN-GLOBAL VisualVoicemail.initialize: application server obtained globally.
 ```
 
@@ -401,7 +401,7 @@ function loadVoicemail(path: FilePath, user: UserSnapshot): VisualVoicemail {
   return new VisualVoicemail(calls);
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testVoicemailSnapshot(): void {
   var calls = ImmutableList.of(new Call("Ada"), new Call("Kim"));
   var voicemail = new VisualVoicemail(calls);
@@ -409,27 +409,27 @@ function testVoicemailSnapshot(): void {
 }
 ```
 
-The source's configuration, server, and call-list factory methods become one inert Assembly function and an Effect loader. This sketch assumes the server's request API manages its own transient resources. If it owns a persistent connection, the loader must close it on all exits or transfer ownership to a longer-lived application graph.
+The source's configuration, server, and call-list factory methods become one inert assembly function and an `@Effect` loader. This sketch assumes the server's request API manages its own transient resources. If it owns a persistent connection, the loader must close it on all exits or transfer ownership to a longer-lived application graph.
 
-For an editable voicemail model, use PureState with an owned call collection and declared mutation methods. Neither form needs a partly initialized instance.
+For an editable voicemail model, use `@Pure(state)` with an owned call collection and declared mutation methods. Neither form needs a partly initialized instance.
 
 ## VideoPlaylistIndex: a test-only constructor leaves the production path broken
 
 ```ts
-// @Effect
+// @Bound — violated by the default constructor that selects a concrete repository.
 class VideoPlaylistIndex {
   // @Owns(repo) @Retains(repo, this) — safe overload, marked test-only in source.
   constructor(private repo: VideoRepository) {}
   constructor() { repo = new FullLibraryIndex(); }
 }
 
-// @Effect
+// @Bound — violated by the field initializer that selects the index graph.
 class PlaylistGenerator {
   private index = new VideoPlaylistIndex();
   function buildPlaylist(query: Query): Playlist { return index.search(query); }
 }
 
-// @Test
+// @Test(bound)
 function testGenerator(): void { var generator = new PlaylistGenerator(); }
 ```
 
@@ -443,23 +443,23 @@ If `FullLibraryIndex` also scans storage in construction, emit `CONTRACT-CONSTRU
 
 ```ts
 interface VideoRepository {
-  // @Effect @Mutates(this)
+  // @Mutates(this)
   search(query: Query): Playlist;
 }
 
-// @Effect
+// @Bound
 class VideoPlaylistIndex {
   // @Owns(repo) @Retains(repo, this)
   constructor(private repo: VideoRepository) {}
-  // @Effect @Mutates(this)
+  // @Behavior(repo.search) @Mutates(this)
   function search(query: Query): Playlist { return repo.search(query); }
 }
 
-// @Effect
+// @Bound
 class PlaylistGenerator {
   // @Owns(index) @Retains(index, this)
   constructor(private index: VideoPlaylistIndex) {}
-  // @Effect @Mutates(this)
+  // @Behavior(index.search) @Mutates(this)
   function buildPlaylist(query: Query): Playlist { return index.search(query); }
 }
 
@@ -470,7 +470,7 @@ function bindGenerator(config: LibraryConfig): PlaylistGenerator {
   return new PlaylistGenerator(move(index));
 }
 
-// @Test — concrete fake is harmless; declared repository capability is Effect.
+// @Test(bound) @Isolated — concrete fake behavior is preserved through the bound chain.
 function testGeneratorWithMemoryRepository(): void {
   var repo = new InMemoryVideoRepository(ImmutableList.of(new Video("intro")));
   var index = new VideoPlaylistIndex(move(repo));
@@ -480,16 +480,16 @@ function testGeneratorWithMemoryRepository(): void {
 }
 ```
 
-Every path now uses the same explicit constructor dependencies. The in-memory repository honors the interface with a narrower deterministic contract. To certify this entire consumer chain as isolated, preserve that narrower behavior through generic contracts or separately checked specializations; the plain interface does not provide the proof.
+Every path now uses the same explicit constructor dependencies. The in-memory repository honors the interface with a narrower deterministic contract. To certify this entire consumer chain as isolated, preserve that narrower behavior through the bound contracts instead of erasing it.
 
 ## Constructor rules that remain local
 
-The checker combines the constructor body, field initializers, and called constructor/method summaries. It rejects external execution, incompatible mutation or retention, and missing required initialization. The optional design profile also flags service selection outside Assembly functions and overridable calls on a partly constructed receiver.
+The checker combines the constructor body, field initializers, and called constructor/method summaries. It rejects external execution, incompatible mutation or retention, and missing required initialization. The optional design profile also flags service selection outside `@Assembly` functions and overridable calls on a partly constructed receiver.
 
 Private state initialization remains allowed:
 
 ```ts
-// @PureState
+// @Pure(state)
 class CallHistory {
   private calls = new Array<Call>(); // Owned empty collection, no external work.
   constructor() {}

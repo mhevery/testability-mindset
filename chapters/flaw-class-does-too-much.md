@@ -2,11 +2,11 @@
 
 Adapted from [Class Does Too Much](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-class-does-too-much.md). Unlike the other three articles, this source contains no concrete code blocks. It describes two named examples—`KillerAppServer` and `SyndicationManager`—and several recognition patterns. The code below is a new illustration of those scenarios, not a transcription of source code that did not exist.
 
-The five colors help identify mixed responsibilities: calculations, mutable state, external interaction, construction, and tests need different contracts. But several responsibilities can have the same color. Two unrelated Pure calculations can still be awkwardly grouped in one class; two external adapters can both be Effect while deserving separate APIs.
+The roles help identify mixed responsibilities: calculations, mutable state, bound coordination, external interaction, construction, and tests need different contracts. But several responsibilities can have the same role. Two unrelated pure calculations can still be awkwardly grouped in one class; two external adapters can both be `@Effect` while deserving separate APIs.
 
 Consequently, a local checker needs two kinds of diagnostic. `CONTRACT-*` reports a violated declared promise. `DESIGN-COHESION` reports review evidence, such as separate field/method groups or assembly mixed with execution. The optional [strict design profile](./07_linter.md#design-diagnostics-for-the-four-flaws) promotes configured design warnings to errors. It does not claim to prove the single-responsibility principle.
 
-These are TypeScript-like design sketches with proposed annotations and hypothetical output. Records are deeply immutable unless marked PureState. Omitted implementations must honor the specified contracts. Fixed examples remove the stated violations and the illustrated design triggers; they are not a guarantee that no future reviewer could suggest a different decomposition.
+These are TypeScript-like design sketches with proposed annotations and hypothetical output. Records are deeply immutable unless marked `@Pure(state)`. Omitted implementations must honor the specified contracts. Fixed examples remove the stated violations and the illustrated design triggers; they are not a guarantee that no future reviewer could suggest a different decomposition.
 
 ## KillerAppServer: flags, assembly, servlet mapping, and execution
 
@@ -36,7 +36,7 @@ DESIGN-COHESION KillerAppServer: flag acquisition, graph construction, routing
   setup, and server execution share one implementation boundary.
 ```
 
-Declaring it Effect would permit the environmental behavior, but would not separate the responsibilities. A local design check can identify the mix of declared Assembly and execution operations. It cannot infer all meaningful server responsibilities from the class name.
+Declaring it `@Effect` would permit the environmental behavior, but would not separate the responsibilities. A local design check can identify the mix of declared `@Assembly` and execution operations. It cannot infer all meaningful server responsibilities from the class name.
 
 ### Fixed: explicit bootstrap, assembly, and execution
 
@@ -86,32 +86,32 @@ function main(): void {
 }
 ```
 
-`FilterChain.add()` and `ServletMappings.add()` have targeted mutation and ownership-retention contracts. Their metadata is private during assembly. `HttpServer`'s constructor consumes those graphs and performs no I/O; its execution methods permit Effect and receiver mutation. `listen()` is assumed to clean up any partial acquisition if it throws, and the run loop closes a successfully opened server.
+`FilterChain.add()` and `ServletMappings.add()` have targeted mutation and ownership-retention contracts. Their metadata is private during assembly. `HttpServer`'s constructor consumes those graphs and performs no I/O; its execution methods permit `@Effect` and receiver mutation. `listen()` is assumed to clean up any partial acquisition if it throws, and the run loop closes a successfully opened server.
 
-The outer `main()` intentionally connects phases, so the design profile exempts the configured bootstrap entry point from the assembly/execution mixing heuristic. Its body still must honor Effect and ownership contracts. Moving all the original work into a renamed `main()` would not improve test seams; the extracted APIs do.
+The outer `main()` intentionally connects phases, so the design profile exempts the configured bootstrap entry point from the assembly/execution mixing heuristic. Its body still must honor `@Effect` and ownership contracts. Moving all the original work into a renamed `main()` would not improve test seams; the extracted APIs do.
 
 ```ts
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testFlags(): void {
   var config = parseFlags(ImmutableList.of("--port=8081"));
   expect(config.port).toBe(8081);
 }
 
-// @Test — construct the production graph without running it.
+// @Test(assembly) — construct the production graph without running it.
 function testAssembly(): void {
   var server = bindServer(testServerConfig());
   expect(server).toBeDefined();
 }
 ```
 
-The parsing test needs only strings. Assembly can be exercised without opening a port. A server-loop integration test remains an Effect test with explicit resource lifetime; it is not necessary for every flag-parsing assertion.
+The parsing test needs only strings. Assembly can be exercised without opening a port. A server-loop integration test remains an `@Test(effect)` with explicit resource lifetime; it is not necessary for every flag-parsing assertion.
 
 ## SyndicationManager: caching, expiration, RPC, and statistics
 
 The source's second example maintains a cache, implements expiration policy, performs RPC to replace entries, and keeps per-user statistics. Here is an illustration with all four responsibilities:
 
 ```ts
-// @PureState — plausible label for a cache, violated by the implementation.
+// @Pure(state) — plausible label for a cache, violated by the implementation.
 class SyndicationManager {
   private entries = new Map<string, SyndicationEntry>();
   private requests = new Map<string, int>();
@@ -136,16 +136,16 @@ class SyndicationManager {
 ```
 
 ```text
-CONTRACT-EFFECT SyndicationManager.get: clock and RPC calls exceed @PureState.
+CONTRACT-EFFECT SyndicationManager.get: clock and RPC calls exceed @Pure(state).
 DESIGN-CONSTRUCTION SyndicationManager.client: concrete RPC collaborator selected
   in a field initializer; receive it through assembly.
 DESIGN-COHESION SyndicationManager: expiration calculation, cache storage,
   remote retrieval, and per-user statistics have distinct change/test boundaries.
 ```
 
-The first error follows from method contracts. The final diagnostic is design evidence. A local analyzer can identify state groups and an effectful coordinator, but recognizing expiration as a separate business policy may still require review.
+The first error follows from method contracts. The final diagnostic is design evidence. A local analyzer can identify state groups and a coordinator that should be bound to explicit collaborators, but recognizing expiration as a separate business policy may still require review.
 
-### Fixed: Pure policy, PureState storage, and an Effect coordinator
+### Fixed: Pure policy, `@Pure(state)` storage, and a bound coordinator
 
 ```ts
 // @Pure
@@ -158,7 +158,7 @@ class ExpirationPolicy {
   }
 }
 
-// @PureState — entries and values are immutable snapshots.
+// @Pure(state) — entries and values are immutable snapshots.
 class SyndicationCache {
   private entries = new Map<string, SyndicationEntry>();
   // @Reads(this)
@@ -167,7 +167,7 @@ class SyndicationCache {
   function put(user: string, entry: SyndicationEntry): void { entries.set(user, entry); }
 }
 
-// @PureState
+// @Pure(state)
 class SyndicationStatistics {
   private requests = new Map<string, int>();
   // @Mutates(this)
@@ -179,15 +179,13 @@ class SyndicationStatistics {
 }
 
 interface SyndicationSource {
-  // @Effect @Mutates(this)
   fetch(user: string): Syndication; // Immutable result.
 }
 interface Clock {
-  // @Effect
   now(): int;
 }
 
-// @Effect — one responsibility: coordinate retrieval and its declared collaborators.
+// @Bound — one responsibility: coordinate retrieval and its declared collaborators.
 class SyndicationService {
   // @Owns(cache) @Retains(cache, this)
   // @Owns(stats) @Retains(stats, this)
@@ -201,7 +199,7 @@ class SyndicationService {
     private policy: ExpirationPolicy,
   ) {}
 
-  // @Effect @Mutates(this)
+  // @Behavior(source.fetch | clock.now) @Mutates(this)
   function get(user: string): Syndication {
     stats.recordRequest(user);
     var now = clock.now();
@@ -227,12 +225,12 @@ function bindSyndications(config: RpcConfig): SyndicationService {
 }
 ```
 
-The coordinator still invokes multiple collaborators; that is its stated responsibility. The policy no longer reads time. The cache does not know how values are fetched. Statistics can change without touching the cache representation. Private `new SyndicationEntry(...)` remains valid data construction inside Effect execution.
+The coordinator still invokes multiple collaborators; that is its stated responsibility. The policy no longer reads time. The cache does not know how values are fetched. Statistics can change without touching the cache representation. Private `new SyndicationEntry(...)` remains valid data construction inside the bound workflow. Production assembly binds the source and clock to effectful implementations.
 
 This illustration preserves the original scenario's request counting and cache-miss/expiration refresh. The particular TTLs are illustrative additions, not values specified by the original article. The sketches describe sequential access: sharing a service across concurrent requests would require a synchronization contract and additional behavior decisions about duplicate fetches.
 
 ```ts
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testExpirationBoundary(): void {
   var policy = new ExpirationPolicy();
   var entry = new SyndicationEntry(new Syndication("news", true), 100, 60);
@@ -240,7 +238,7 @@ function testExpirationBoundary(): void {
   expect(policy.isExpired(entry, 160)).toBe(true);
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testRequestCounts(): void {
   var stats = new SyndicationStatistics();
   stats.recordRequest("kim");
@@ -249,7 +247,7 @@ function testRequestCounts(): void {
   expect(stats.requestsFor("ada")).toBe(0);
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testCacheStoresSnapshot(): void {
   var cache = new SyndicationCache();
   var entry = new SyndicationEntry(new Syndication("news", true), 100, 60);
@@ -258,14 +256,14 @@ function testCacheStoresSnapshot(): void {
 }
 ```
 
-These tests need no RPC or clock. A coordinator test can inject a fixed clock and source fake, but the ordinary interfaces still permit Effect. Such a test is valid `@Test`; it is not automatically statically `@Isolated`. Checking TTL arithmetic separately does not replace tests of the coordinator's refresh behavior.
+These tests need no RPC or clock. A coordinator test can inject a fixed clock and source fake, but static isolation requires the bound consumer to preserve the concrete fake behavior through its contract. Such a test is a valid `@Test(bound)`; it is not automatically statically `@Isolated` if behavior has been erased. Checking TTL arithmetic separately does not replace tests of the coordinator's refresh behavior.
 
-## Separate field groups can reveal same-color responsibilities
+## Separate field groups can reveal same-role responsibilities
 
 The source points out fields used only by subsets of methods. This illustration makes that pattern explicit without adding any effects:
 
 ```ts
-// @PureState @Mutates(this) — class default for these update methods.
+// @Pure(state) @Mutates(this) — class default for these update methods.
 class UserDataManager {
   private contacts = new Map<string, ContactSnapshot>();
   private invoiceTotals = new Map<string, Money>();
@@ -288,10 +286,10 @@ DESIGN-COHESION UserDataManager: two disjoint mutable-field/method groups found:
   Consider ContactBook and InvoiceLedger. Purity/ownership checks pass.
 ```
 
-This is mechanically observable within the class. It is still a heuristic: an aggregate can legitimately own separate state groups. Under the strict profile, a reviewed exception is possible; merely changing the color is not a fix.
+This is mechanically observable within the class. It is still a heuristic: an aggregate can legitimately own separate state groups. Under the strict profile, a reviewed exception is possible; merely changing the annotation is not a fix.
 
 ```ts
-// @PureState
+// @Pure(state)
 class ContactBook {
   private contacts = new Map<string, ContactSnapshot>();
   // @Mutates(this)
@@ -300,7 +298,7 @@ class ContactBook {
   function remove(id: string): void { contacts.delete(id); }
 }
 
-// @PureState
+// @Pure(state)
 class InvoiceLedger {
   private totals = new Map<string, Money>();
   // @Mutates(this)
@@ -329,8 +327,8 @@ class MailingManager {
 ```
 
 ```text
-DESIGN-COHESION MailingManager.formatAddress: parameter-only Pure helper has
-  no dependency on the service's state. Consider a Pure formatter or value method.
+DESIGN-COHESION MailingManager.formatAddress: parameter-only pure helper has
+  no dependency on the service's state. Consider a pure formatter or value method.
   This is not an error caused by the static keyword.
 ```
 
@@ -342,15 +340,15 @@ class AddressFormatter {
   }
 }
 
-// @Effect
+// @Bound
 class MailingService {
   // @Owns(transport) @Retains(transport, this)
   constructor(private transport: MailTransport) {}
-  // @Effect @Mutates(this)
+  // @Behavior(transport.send) @Mutates(this)
   function send(message: Message): void { transport.send(message); }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testAddressFormatting(): void {
   var address = new Address("1 Main St", "Sunnyvale", "94086");
   expect(new AddressFormatter().format(address))
@@ -358,12 +356,12 @@ function testAddressFormatting(): void {
 }
 ```
 
-A Pure standalone function would also pass. Immutable DTOs with little behavior are useful; this book explicitly uses them to move snapshots across Effect boundaries. The presence of data-only collaborators is a review clue, not a rule requiring every DTO to acquire methods. Move behavior when it gives a clearer responsibility boundary, not to satisfy a superficial object-oriented metric.
+A pure standalone function would also pass. Immutable DTOs with little behavior are useful; this book explicitly uses them to move snapshots across effect boundaries. The presence of data-only collaborators is a review clue, not a rule requiring every DTO to acquire methods. Move behavior when it gives a clearer responsibility boundary, not to satisfy a superficial object-oriented metric.
 
 ## What lint can establish
 
-A class claiming PureState while reading a clock fails a semantic contract. An Assembly function running a server fails its assembly contract. These are locally checkable errors.
+A class claiming `@Pure(state)` while reading a clock fails a semantic contract. An `@Assembly` function running a server fails its assembly contract. These are locally checkable errors.
 
 A class with several state groups, many dependencies, or unrelated parameter-only helpers is a candidate for decomposition. Those observations can support configurable diagnostics, but neither a line-count limit nor a method graph proves conceptual responsibility. Complex classes may pass the basic contract checker; small classes may still have poor responsibilities.
 
-The practical repair from the original article remains useful: identify the responsibility being changed, name it, extract it with an explicit API, and test that API. For legacy code, extracting one responsibility is progress even if the entire class cannot be redesigned immediately. Record remaining design findings honestly rather than labeling an incompletely checked class “Pure” to silence them.
+The practical repair from the original article remains useful: identify the responsibility being changed, name it, extract it with an explicit API, and test that API. For legacy code, extracting one responsibility is progress even if the entire class cannot be redesigned immediately. Record remaining design findings honestly rather than labeling an incompletely checked class “pure” to silence them.

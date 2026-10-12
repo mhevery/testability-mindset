@@ -1,8 +1,8 @@
 # Flaw: Brittle Global State and Singletons
 
-Adapted from [Brittle Global State & Singletons](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-brittle-global-state-singletons.md). The examples preserve the original situations while using this book's five colors and ownership contracts. Framework-specific injection becomes explicit Assembly code.
+Adapted from [Brittle Global State & Singletons](https://github.com/mhevery/guide-to-testable-code/blob/main/flaw-brittle-global-state-singletons.md). The examples preserve the original situations while using this book's roles and ownership contracts. Framework-specific injection becomes explicit Assembly code.
 
-A mutable object's type can be 🟡 PureState while access to a globally reachable instance is 🟥 Effect. The problem is the access path: two otherwise independent tests can communicate through the same state.
+A mutable object's type can be `@Pure(state)` while access to a globally reachable instance is `@Effect`. The problem is the access path: two otherwise independent tests can communicate through the same state.
 
 Diagnostics below are proposed output, not results from an implemented checker. `CONTRACT-*` errors follow from declared guarantees. `DESIGN-*` errors use the optional strict design profile described in [the linter chapter](./07_linter.md#design-diagnostics-for-the-four-flaws). In particular, an honest `@Effect` annotation permits effects but does not satisfy the profile's requirement to inject application collaborators.
 
@@ -22,13 +22,13 @@ class CreditCard {
   }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testActionAtADistance(): void {
   var card = new CreditCard("4444444444444441", "01/11");
   expect(card.charge(Money.dollars(100))).toBe(true);
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testWithGlobalInitialization(): void {
   Database.init("dbURL", "user", "password");
   CreditCardProcessor.init("processorURL", "key", "vendor");
@@ -53,7 +53,6 @@ class CreditCard {
 }
 
 interface CardProcessor {
-  // @Effect @Mutates(this)
   charge(card: CreditCard, amount: Money): boolean;
 }
 
@@ -76,7 +75,7 @@ function bindProcessor(config: ProcessorConfig): CreditCardProcessor {
   return new CreditCardProcessor(move(db), config);
 }
 
-// @PureState
+// @Pure(state)
 class RecordingCardProcessor implements CardProcessor {
   var charged = Money.zero();
   // @Mutates(this)
@@ -88,7 +87,7 @@ class RecordingCardProcessor implements CardProcessor {
   function chargedAmount(): Money { return charged; }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testCharge(): void {
   var processor = new RecordingCardProcessor();
   var card = new CreditCard("4444444444444441", "01/11");
@@ -97,12 +96,12 @@ function testCharge(): void {
 }
 ```
 
-The test calls the concrete recording contract, whose only mutation targets test-owned state. Production charging remains Effect. `PaymentHttp` is an explicitly contracted infrastructure primitive, used within the adapter; it is not an application service locator. The dummy expiry is preserved as fixture data, not a request to perform a real payment.
+The test calls the concrete recording contract, whose only mutation targets test-owned state. Production charging is performed by an `@Effect` adapter. `PaymentHttp` is an explicitly contracted infrastructure primitive, used within the adapter; it is not an application service locator. The dummy expiry is preserved as fixture data, not a request to perform a real payment.
 
 ## UniqueID: one global counter is enough
 
 ```ts
-// @PureState — instance-state promise violated by the static counter.
+// @Pure(state) — instance-state promise violated by the static counter.
 class UniqueID {
   private static nextID = 0;
   // @Pure
@@ -112,20 +111,20 @@ class UniqueID {
 
 ```text
 CONTRACT-AMBIENT UniqueID.get: reads and writes static mutable nextID.
-  @Pure permits no ambient state; @PureState does not authorize a global instance.
+  @Pure permits no ambient state; @Pure(state) does not authorize a global instance.
 ```
 
 A local counter is an honest state machine:
 
 ```ts
-// @PureState
+// @Pure(state)
 class UniqueID {
   constructor(private nextID: int = 0) {}
   // @Mutates(this)
   function get(): int { return nextID++; }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testIndependentSequences(): void {
   var first = new UniqueID();
   var second = new UniqueID();
@@ -135,14 +134,14 @@ function testIndependentSequences(): void {
 }
 ```
 
-The intended uniqueness scope is now explicit. Independent counters do not provide globally unique identifiers across processes. If that is required, an external allocator is an Effect with a different contract.
+The intended uniqueness scope is now explicit. Independent counters do not provide globally unique identifiers across processes. If that is required, an external allocator is an `@Effect` adapter with a different contract.
 
 ## AppSettings and Cache: global reachability is transitive
 
 The source illustrates both three mutable settings behind one static reference and an unbounded collection of users behind one cache singleton:
 
 ```ts
-// @PureState
+// @Pure(state)
 class AppSettings {
   static readonly instance = new AppSettings();
   var numberOfThreads = 10;
@@ -150,7 +149,7 @@ class AppSettings {
   var timeout = 30;
 }
 
-// @PureState
+// @Pure(state)
 class Cache {
   static readonly instance = new Cache();
   var userCache = new Map<string, User>();
@@ -182,7 +181,7 @@ class AppSettings {
   ) {}
 }
 
-// @PureState
+// @Pure(state)
 class Cache {
   private users = new Map<string, UserSnapshot>();
   // @Owns(eviction) @Retains(eviction, this)
@@ -199,11 +198,11 @@ class Cache {
 
 // @Assembly @ReturnsFresh
 function bindCache(): Cache {
-  var eviction = new LruEvictionStrategy(); // @PureState, inert construction.
+  var eviction = new LruEvictionStrategy(); // @Pure(state), inert construction.
   return new Cache(move(eviction));
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testCacheOwnership(): void {
   var first = bindCache();
   var second = bindCache();
@@ -239,7 +238,7 @@ class AdminDashboard {
   }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testDashboard(): void {
   LoginService.setForTest(new MockLoginService());
   expect(new AdminDashboard().isAuthenticatedAdminUser(admin)).toBe(true);
@@ -259,15 +258,15 @@ Cleanup cannot exclude overlap with another test. The repair gives construction 
 
 ```ts
 interface LoginService {
-  // @Effect @Mutates(this)
+  // @Mutates(this)
   isAuthenticatedAdmin(user: UserSnapshot): boolean;
 }
 
-// @Effect
+// @Bound
 class AdminDashboard {
   // @Owns(login) @Retains(login, this)
   constructor(private login: LoginService) {}
-  // @Effect @Mutates(this)
+  // @Behavior(login.isAuthenticatedAdmin) @Mutates(this)
   function isAuthenticatedAdminUser(user: UserSnapshot): boolean {
     return login.isAuthenticatedAdmin(user);
   }
@@ -280,7 +279,7 @@ class MockLoginService implements LoginService {
   }
 }
 
-// @Test — broad interface permits Effect; do not claim @Isolated here.
+// @Test(bound) @Isolated — bound behavior is preserved through AdminDashboard.
 function testInjectedLogin(): void {
   var login = new MockLoginService();
   var dashboard = new AdminDashboard(move(login));
@@ -289,14 +288,14 @@ function testInjectedLogin(): void {
 }
 ```
 
-The test uses a harmless implementation, but the separately checked dashboard contract is Effect. Static isolation needs a behavior-generic consumer or a checked narrower specialization. Injection alone does not establish that stronger proof.
+The test uses a harmless implementation, and the dashboard can preserve that implementation's behavior because it is `@Bound`. Static isolation still needs the concrete behavior to be carried through the contract; injection alone does not establish that stronger proof.
 
-An Assembly function may create one service per application and pass it through explicit lifetime-checked references. “One per application” is a construction policy, not a static field. The owned example above chooses one service per dashboard for simpler ownership.
+An `@Assembly` function may create one service per application and pass it through explicit lifetime-checked references. “One per application” is a construction policy, not a static field. The owned example above chooses one service per dashboard for simpler ownership.
 
 ## NetworkLoadCalculator: flag setup and cleanup
 
 ```ts
-// @PureState
+// @Pure(state)
 class NetworkLoadCalculator {
   private loads = ImmutableList.of<int>();
   // @Mutates(this)
@@ -310,7 +309,7 @@ class NetworkLoadCalculator {
   }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testMaximum(): void {
   Flags.disableStateCheckingForTest();
   ConfigFlags.FLAG_loadAlgorithm.setForTest("maximum");
@@ -324,14 +323,14 @@ function testMaximum(): void {
 
 ```text
 CONTRACT-AMBIENT NetworkLoadCalculator.calculateTotalLoad: flag lookup is not
-  a read of this; the @PureState contract excludes ambient configuration.
+  a read of this; the @Pure(state) contract excludes ambient configuration.
 CONTRACT-ISOLATION testMaximum: flag setup and cleanup mutate global state.
 ```
 
 Keep the mutable load sources but supply the immutable algorithm value:
 
 ```ts
-// @PureState
+// @Pure(state)
 class NetworkLoadCalculator {
   private loads = ImmutableList.of<int>();
   constructor(private algorithm: "maximum" | "sum") {}
@@ -345,7 +344,7 @@ class NetworkLoadCalculator {
   }
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testMaximum(): void {
   var calc = new NetworkLoadCalculator("maximum");
   calc.setLoadSources(10, 5, 0);
@@ -353,7 +352,7 @@ function testMaximum(): void {
 }
 ```
 
-Production reads flags at an Effect bootstrap boundary, then supplies the value. Reading flags inside an Assembly function would still violate this book's assembly-only rule.
+Production reads flags at an `@Effect` bootstrap boundary, then supplies the value. Reading flags inside an `@Assembly` function would still violate this book's assembly-only rule.
 
 ## RpcClient: static initialization chooses the backend once
 
@@ -368,14 +367,14 @@ class RpcClient {
   static function getInstance(): RpcClient { return client; }
 }
 
-// @Test
+// @Test(bound)
 function testRealBackend(): void {
   FLAG_useRealBackend.set(true);
   var client = RpcClient.getInstance();
   FLAG_useRealBackend.resetForTest();
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testDummyCache(): void {
   FLAG_useRealBackend.set(false);
   var cache = new RpcCache(RpcClient.getInstance());
@@ -385,7 +384,7 @@ function testDummyCache(): void {
 
 ```text
 DESIGN-STATIC-INIT RpcClient: import-time flag access and collaborator selection
-  hide application assembly. Move selection to an Assembly function receiving a flag value.
+  hide application assembly. Move selection to an `@Assembly` function receiving a flag value.
 CONTRACT-ISOLATION testDummyCache: flag and singleton access cross the test region.
 ```
 
@@ -393,24 +392,24 @@ The checker need not prove which test loads the class first. The shared initiali
 
 ```ts
 interface Backend {
-  // @Effect @Mutates(this)
+  // @Mutates(this)
   fetch(key: string): string;
 }
 
-// @Effect
+// @Bound
 class RpcClient {
   // @Owns(backend) @Retains(backend, this)
   constructor(private backend: Backend) {}
-  // @Effect @Mutates(this)
+  // @Behavior(backend.fetch) @Mutates(this)
   function fetch(key: string): string { return backend.fetch(key); }
 }
 
-// @Effect — cache misses may invoke the backend.
+// @Bound — cache misses may invoke the bound backend behavior.
 class RpcCache {
   private entries = new Map<string, string>();
   // @Owns(client) @Retains(client, this)
   constructor(private client: RpcClient) {}
-  // @Effect @Mutates(this)
+  // @Behavior(client.fetch) @Mutates(this)
   function get(key: string): string {
     if (!entries.has(key)) entries.set(key, client.fetch(key));
     return entries.get(key)!;
@@ -418,20 +417,24 @@ class RpcCache {
 }
 
 // @Assembly
-function bindClient(useReal: boolean): RpcClient {
-  var backend = useReal ? new RealBackend() : new DummyBackend();
-  return new RpcClient(move(backend));
+function bindRealClient(): RpcClient {
+  return new RpcClient(move(new RealBackend()));
 }
 
-// @Test — explicit integration test, external resources still need management.
+// @Assembly
+function bindDummyClient(): RpcClient {
+  return new RpcClient(move(new DummyBackend()));
+}
+
+// @Test(effect) — explicit integration test, external resources still need management.
 function testRealBackend(): void {
-  var client = bindClient(true);
+  var client = bindRealClient();
   expect(client.fetch("known-key")).toBe("known-value");
 }
 
-// @Test — selected implementation is local; broad contract remains Effect.
+// @Test(bound) @Isolated — selected implementation is local and bound behavior is preserved.
 function testDummyCache(): void {
-  var client = bindClient(false);
+  var client = bindDummyClient();
   var cache = new RpcCache(move(client));
   expect(cache.get("key")).toBe("dummy-value");
 }
@@ -460,7 +463,6 @@ Keep the source's adapter seam, then isolate the scheduling decision:
 
 ```ts
 interface StatusChecker {
-  // @Effect
   isClosed(track: Track): boolean;
 }
 
@@ -478,12 +480,12 @@ class TrainSchedules {
   }
 }
 
-// @Effect @NoEscape(checker)
+// @Bound @Behavior(checker.isClosed) @NoEscape(checker)
 function findCurrentTrain(checker: StatusChecker, track: Track): Schedule {
   return new TrainSchedules().findNextTrain(track, checker.isClosed(track));
 }
 
-// @Test @Isolated
+// @Test(pure) @Isolated
 function testNoClosings(): void {
   var track = new Track("north");
   expect(new TrainSchedules().findNextTrain(track, false))
@@ -491,7 +493,7 @@ function testNoClosings(): void {
 }
 ```
 
-The adapter remains Effect; it does not cleanse the library call. A static Pure function such as `max()` requires no adapter merely because it is static.
+The adapter remains `@Effect`; it does not cleanse the library call. A static pure function such as `max()` requires no adapter merely because it is static.
 
 ## Payroll notifications, constants, and logging
 
@@ -516,7 +518,7 @@ DESIGN-COHESION printPayrollReport: payment and report output warrant separate A
 Make the report workflow explicit and give payment its own entry point:
 
 ```ts
-// @Effect @NoEscape(printer) @NoEscape(reports) @NoEscape(supplies)
+// @Bound @Behavior(printer.print | reports.report | supplies.notifyTonerUsed) @NoEscape(printer) @NoEscape(reports) @NoEscape(supplies)
 function printPayrollReport(
   employee: EmployeeSnapshot,
   printer: Printer,
@@ -527,12 +529,12 @@ function printPayrollReport(
   supplies.notifyTonerUsed(usage.pages, usage.coverage);
 }
 
-// @Effect @NoEscape(bank)
+// @Bound @Behavior(bank.payEmployee) @NoEscape(bank)
 function payEmployee(employee: EmployeeSnapshot, bank: BankAccount): void {
   bank.payEmployee(employee, employee.pay);
 }
 ```
 
-Here the declared interfaces permit external interaction without retaining arguments or mutating receiver-local state; an adapter needing local mutation must add its targeted contract. Report output now includes its toner notification explicitly; callers invoke payment deliberately. Whether notification belongs in this workflow is a product decision, not something the colors can decide.
+Here the declared interfaces expose collaborator behavior without retaining arguments or mutating receiver-local state. Effectful adapters provide external interaction; in-memory fakes provide deterministic state. Report output now includes its toner notification explicitly; callers invoke payment deliberately. Whether notification belongs in this workflow is a product decision, not something the roles can decide.
 
-A deeply immutable global constant is allowed. A constant reference to a mutable map is not equivalent. Logging to a file or console remains Effect even when the program never reads the log back. Inject a logger to replace it in tests, or return immutable log events for an outer Effect to emit. The source's one-way-logging caveat does not grant a Pure or Isolated exception in this book.
+A deeply immutable global constant is allowed. A constant reference to a mutable map is not equivalent. Logging to a file or console remains `@Effect` even when the program never reads the log back. Inject a logger to replace it in tests, or return immutable log events for an outer `@Effect` adapter to emit. The source's one-way-logging caveat does not grant a pure or isolated exception in this book.
